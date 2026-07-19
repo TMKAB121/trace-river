@@ -1,0 +1,103 @@
+# Architecture
+
+## Process model
+
+TraceRiver is a **single Node.js process** started by the CLI:
+
+```
+traceriver start
+  └── Fastify server bound to 127.0.0.1:<port>
+        ├── serves the pre-built React SPA (shipped in the npm tarball at dist/web)
+        ├── REST endpoints (upload, source list, buffer replay)
+        └── WebSocket endpoint (live log stream + source control)
+```
+
+On startup the CLI resolves a port, starts the server, and opens the user's default browser at `http://127.0.0.1:<port>/?token=<session-token>` (suppressed with `--no-open`).
+
+There is no daemon, no background service, no state that outlives the process. Ctrl-C ends everything.
+
+## Data flow
+
+```
+┌─────────────────┐   ┌──────────────────┐   ┌─────────────────┐
+│ Ingest adapters │   │  Uniform Parser   │   │   Ring buffer   │
+│                 │──▶│     Pipeline      │──▶│  (default 50k)  │
+│ • docker attach │   │ raw chunk → line  │   └────────┬────────┘
+│ • file tailer   │   │ → TraceRiverLog   │            │
+│ • file upload   │   └──────────────────┘            ▼
+└─────────────────┘                          ┌─────────────────┐
+                                             │ WS broadcaster  │──▶ Browser SPA
+                                             │ (batched ~75ms) │
+                                             └─────────────────┘
+```
+
+1. **Ingest adapters** (one per source type) produce raw byte chunks tagged with a source id. Adapters own source-specific concerns: Docker stream demuxing, file offsets, upload streaming.
+2. The **Uniform Parser Pipeline** turns chunks into complete lines (partial-line buffering), then lines into [`TraceRiverLog`](log-schema.md) entries (format detection, multi-line aggregation, normalization).
+3. Parsed entries land in a **server-side ring buffer** and are broadcast to connected browsers.
+
+All parsing happens on the server — including uploaded files — so there is exactly one pipeline to build, test, and extend. The browser only ever sees `TraceRiverLog` objects.
+
+## Transport: WebSocket
+
+A single WebSocket connection per browser tab (`ws` library). Chosen over SSE because the channel is genuinely bidirectional — the client sends control messages (subscribe/unsubscribe sources, clear buffer), the server pushes entries. See [decisions.md](decisions.md).
+
+**Message shapes** (all JSON):
+
+```
+server → client
+  { type: "entries",  entries: TraceRiverLog[] }        // batched
+  { type: "sources",  sources: SourceDescriptor[] }     // full source list on change
+  { type: "sourceState", id, state: "live"|"stopped"|"error", detail? }
+
+client → server
+  { type: "subscribe",   sourceIds: string[] }
+  { type: "unsubscribe", sourceIds: string[] }
+  { type: "clear" }                                     // empties the ring buffer
+```
+
+**Batching / backpressure.** Entries are never sent one-per-frame. The broadcaster accumulates and flushes every ~75 ms (or at 500 entries, whichever first). If a client's socket buffer exceeds a high-water mark (`ws` `bufferedAmount`), batches are dropped for that client with a `{ type: "dropped", count }` notice — the server ring buffer remains authoritative and the client can re-sync via replay.
+
+**Replay on connect/refresh.** A new WS connection (or `GET /api/replay?after=<id>`) receives the current ring buffer contents first, then live entries. A browser refresh therefore never shows an empty console.
+
+## Memory model
+
+- **Server ring buffer**: fixed-capacity circular buffer, default **50,000 entries**, configurable via `--buffer` / `traceriver.json`. Oldest entries are evicted silently; the UI shows "showing last N" when eviction has occurred.
+- **Client store**: mirrors the same cap. The virtualized list renders only visible rows, but the backing array is also bounded so a week-long session can't balloon the tab.
+- **Freeze Stream** freezes *rendering only*: incoming batches keep landing in the client store (and server buffer) while frozen, with a "n new entries" badge; unfreezing scrolls to live tail. Nothing is dropped by freezing.
+
+## Security model
+
+A localhost web server with Docker-socket access needs real guardrails:
+
+- **Bind to `127.0.0.1` only.** Never `0.0.0.0`. LAN exposure is explicitly out of scope for v1.
+- **Session token.** The CLI generates a random token per run (crypto-random, 128-bit). It is embedded in the URL the CLI opens, stored by the SPA, and required on every WS upgrade and REST call (`?token=` or `Authorization` header). This defends against DNS-rebinding and against arbitrary sites on the user's machine talking to the server — `localhost` origin alone is *not* trustworthy.
+- **Host/Origin validation.** Reject requests whose `Host` isn't `127.0.0.1:<port>`/`localhost:<port>` and WS upgrades whose `Origin` doesn't match — second layer against rebinding.
+- **Docker socket is root-equivalent.** TraceRiver only ever calls read-only endpoints (list, inspect, logs, events). No create/exec/remove calls exist anywhere in the codebase — treat this as a hard rule, enforceable by the thin Docker client wrapper exposing only those methods.
+- **Log files are read-only.** The tailer opens files with read flags only.
+- **No telemetry.** Nothing leaves the machine.
+
+## Port strategy
+
+- Default port **7580** — deliberately outside the crowded dev range (3000/5173/8000/8080 are all claimed by popular tools).
+- If occupied, auto-increment (7581, 7582, … up to +20) and log which port was chosen.
+- `--port <n>` overrides; when explicitly set, conflict is a hard error, not auto-increment (the user asked for that port).
+
+## Packaging & distribution
+
+- **Single npm package**, `bin: { traceriver: "dist/cli.js" }` — works via `npx traceriver`, global install, or dev-dependency.
+- **ESM**, **Node ≥ 20** (engines field enforced).
+- **Frontend pre-built** by Vite at publish time and shipped in the tarball (`dist/web/`). Installing never triggers a build; there are zero postinstall scripts.
+- **Dependency budget**: runtime deps limited to `fastify`, `@fastify/static`, `ws`, `dockerode`, `chokidar`, `commander`. All pure JS — no native compilation on install. Everything else (React, Vite, TanStack Virtual, TypeScript) is a devDependency baked into the built assets.
+- Source layout (single package, no monorepo):
+
+```
+src/
+  cli/        # commander entry, port resolution, browser-open, token gen
+  server/     # fastify wiring, WS broadcaster, ring buffer, REST routes
+  ingest/     # adapters: docker.ts, tail.ts, upload.ts
+  parsers/    # pipeline + format parsers (see log-schema.md)
+  shared/     # TraceRiverLog types + WS message types (imported by web/)
+web/          # Vite + React SPA (own tsconfig, builds to dist/web)
+test/
+  fixtures/   # real-world log samples per format
+```
