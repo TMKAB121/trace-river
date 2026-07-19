@@ -1,0 +1,31 @@
+{
+  "name": "traceriver",
+  "version": "0.0.1",
+  "description": "Local log console — consolidate Docker, framework, and file logs into one unified stream and surface the errors. Under active development.",
+  "keywords": [
+    "logs",
+    "log-viewer",
+    "logging",
+    "docker",
+    "laravel",
+    "local-development",
+    "devtools",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TMKAB121/trace-river.git"
+  },
+  "type": "module",
+  "bin": {
+    "traceriver": "cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "cli.js",
+    "README.md"
+  ]
+}

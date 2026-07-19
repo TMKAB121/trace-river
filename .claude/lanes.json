@@ -1,0 +1,48 @@
+{
+  "lanes": {
+    "ux-designer": {
+      "allow": ["docs/specs/", "docs/design-system.md", "docs/design-reviews/"],
+      "hint": "Findings about code are reported in your review, not fixed."
+    },
+    "frontend-developer": {
+      "allow": ["web/"],
+      "hint": "Backend (src/), specs, and tests are other lanes — raise an OPEN QUESTION if you are blocked."
+    },
+    "backend-developer": {
+      "allow": ["src/", ".github/", "package.json", "tsconfig.json"],
+      "hint": "UI files (web/) and tests are other lanes — raise an OPEN QUESTION if you are blocked."
+    },
+    "qa-engineer": {
+      "allow": ["test/", "docs/qa/"],
+      "hint": "A failing behavior becomes a defect report in docs/qa/defects/ — never a code fix."
+    },
+    "technical-writer": {
+      "allow": ["README.md", "docs/project/"],
+      "hint": "You document the shipped state; code, specs, tests, and other docs are other lanes — raise an OPEN QUESTION if you are blocked."
+    }
+  },
+  "protected": [".claude/settings.json", ".claude/hooks/", ".claude/lanes.json", ".claude/qa.json"],
+  "dependencies": {
+    "allow": [
+      "fastify",
+      "@fastify/static",
+      "ws",
+      "dockerode",
+      "chokidar",
+      "commander",
+      "typescript",
+      "tsx",
+      "vite",
+      "react",
+      "react-dom",
+      "@types/react",
+      "@types/react-dom",
+      "@types/node",
+      "@types/ws",
+      "@tanstack/react-virtual",
+      "@vitejs/plugin-react",
+      "vitest"
+    ],
+    "installers": ["backend-developer"]
+  }
+}
