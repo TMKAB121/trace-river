@@ -1,0 +1,61 @@
+.drop-area {
+  position: relative;
+  border: 1px dashed var(--color-border-interactive);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  text-align: center;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  transition: border-color var(--motion-fast);
+}
+
+.drop-area:hover,
+.drop-area:focus-within {
+  border-color: var(--color-accent-interactive);
+}
+
+.drop-area__icon {
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.drop-area__title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+}
+
+.drop-area__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+}
+
+.drop-area__browse-line {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-base);
+}
+
+.drop-area__browse {
+  color: var(--color-accent-interactive);
+  text-decoration: underline;
+  font-weight: var(--font-weight-bold);
+}
+
+.drop-area__progress-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--color-border);
+}
+
+.drop-area__progress-fill {
+  height: 100%;
+  background: var(--color-accent-interactive);
+  transition: width var(--motion-fast);
+}

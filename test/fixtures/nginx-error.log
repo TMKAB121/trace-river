@@ -1,0 +1,3 @@
+[Wed Oct 11 14:32:52 2026] [error] [client 127.0.0.1] File does not exist: /var/www/favicon.ico
+[Wed Oct 11 14:33:10 2026] [warn] [client 127.0.0.1] client sent invalid header
+[Wed Oct 11 14:33:45 2026] [notice] Apache/2.4 configured -- resuming normal operations

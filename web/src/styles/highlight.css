@@ -1,0 +1,21 @@
+/**
+ * highlight.js token -> design-token color mapping, per
+ * docs/design-system.md § Syntax highlighting. Punctuation ({ } [ ] : ,) is
+ * left unclassed by highlight.js's json grammar, so it inherits the code
+ * block's own default (--color-text-muted) rather than a `.hljs-*` class.
+ */
+.expanded-panel__code--json .hljs-attr {
+  color: var(--color-text-primary);
+}
+
+.expanded-panel__code--json .hljs-string {
+  color: var(--color-level-info);
+}
+
+.expanded-panel__code--json .hljs-number {
+  color: var(--color-level-warn);
+}
+
+.expanded-panel__code--json .hljs-literal {
+  color: var(--color-level-debug);
+}

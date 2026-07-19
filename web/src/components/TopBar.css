@@ -1,0 +1,167 @@
+.topbar-wrap {
+  flex: 0 0 auto;
+  background: var(--color-surface-topbar);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.topbar {
+  height: var(--topbar-height);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+}
+
+.topbar-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-interactive);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+  white-space: nowrap;
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.topbar-btn:hover:not(:disabled) {
+  border-color: var(--color-accent-interactive);
+}
+
+.topbar-btn:disabled {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  opacity: 0.5;
+}
+
+.topbar-btn[aria-pressed="true"] {
+  border-color: var(--color-accent-interactive);
+  color: var(--color-accent-interactive);
+}
+
+.topbar-btn__badge {
+  background: var(--color-accent-interactive);
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  border-radius: var(--radius-pill);
+  padding: 1px var(--space-2);
+}
+
+.search-input {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-interactive);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  min-width: 0;
+}
+
+.search-input:focus-within {
+  border-color: var(--color-accent-interactive);
+}
+
+.search-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-base);
+}
+
+.search-input input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.search-input input:disabled {
+  cursor: not-allowed;
+}
+
+.search-input__clear {
+  color: var(--color-text-muted);
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.search-input__clear:hover {
+  color: var(--color-text-primary);
+}
+
+.filter-row {
+  height: var(--filter-row-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.level-chips {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.level-chip {
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-label);
+  text-transform: uppercase;
+  border: 1px solid var(--color-text-muted);
+  color: var(--color-text-muted);
+  background: transparent;
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.level-chip:disabled {
+  opacity: 0.5;
+}
+
+.level-chip--active.level-chip--debug {
+  background: color-mix(in srgb, var(--color-level-debug) 18%, transparent);
+  border-color: var(--color-level-debug);
+  color: var(--color-level-debug);
+}
+
+.level-chip--active.level-chip--info {
+  background: color-mix(in srgb, var(--color-level-info) 18%, transparent);
+  border-color: var(--color-level-info);
+  color: var(--color-level-info);
+}
+
+.level-chip--active.level-chip--warn {
+  background: color-mix(in srgb, var(--color-level-warn) 18%, transparent);
+  border-color: var(--color-level-warn);
+  color: var(--color-level-warn);
+}
+
+.level-chip--active.level-chip--error {
+  background: color-mix(in srgb, var(--color-level-error) 18%, transparent);
+  border-color: var(--color-level-error);
+  color: var(--color-level-error);
+}
+
+.level-chip--active.level-chip--fatal {
+  background: color-mix(in srgb, var(--color-level-fatal) 18%, transparent);
+  border-color: var(--color-level-fatal);
+  color: var(--color-level-fatal);
+}
+
+.level-chip--active.level-chip--unknown {
+  background: color-mix(in srgb, var(--color-level-unknown) 18%, transparent);
+  border-color: var(--color-level-unknown);
+  color: var(--color-level-unknown);
+}

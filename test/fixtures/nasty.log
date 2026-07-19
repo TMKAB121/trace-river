@@ -1,0 +1,28 @@
+[2026-07-19 10:00:00] app.INFO: [1mBooting application[0m
+[2026-07-19 10:00:01] app.DEBUG: [31mConnecting to database[0m host=127.0.0.1
+[2026-07-19 10:00:02] app.ERROR: Query failed: SELECT * FROM users
+#0 /app/src/Handler0.php(10): Handler0->handle()
+#1 /app/src/Handler1.php(11): Handler1->handle()
+#2 /app/src/Handler2.php(12): Handler2->handle()
+#3 /app/src/Handler3.php(13): Handler3->handle()
+#4 /app/src/Handler4.php(14): Handler4->handle()
+#5 /app/src/Handler5.php(15): Handler5->handle()
+#6 /app/src/Handler6.php(16): Handler6->handle()
+#7 /app/src/Handler7.php(17): Handler7->handle()
+#8 /app/src/Handler8.php(18): Handler8->handle()
+#9 /app/src/Handler9.php(19): Handler9->handle()
+#10 /app/src/Handler10.php(20): Handler10->handle()
+#11 /app/src/Handler11.php(21): Handler11->handle()
+Caused by: PDOException: SQLSTATE[HY000] [2002] Connection refused
+Stack trace:
+#0 /app/src/Db0.php(20): Db0->connect()
+#1 /app/src/Db1.php(21): Db1->connect()
+#2 /app/src/Db2.php(22): Db2->connect()
+#3 /app/src/Db3.php(23): Db3->connect()
+#4 /app/src/Db4.php(24): Db4->connect()
+#17 {main}
+[2026-07-19 10:00:05] app.WARNING: [31mRetrying[0m connection (attempt 1)
+{"level":"info","msg":"mixed jsonl line inside a mostly-monolog file","time":"2026-07-19T10:00:06.000Z"}
+127.0.0.1 - - [19/Jul/2026:10:00:07 +0000] "GET /health HTTP/1.1" 200 2 "-" "-"
+[2026-07-19 10:00:08] app.INFO: Recovered, continuing normal operation
+plain trailing line with no timestamp and the word error in it

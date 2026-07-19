@@ -41,7 +41,9 @@
       "@types/ws",
       "@tanstack/react-virtual",
       "@vitejs/plugin-react",
-      "vitest"
+      "vitest",
+      "highlight.js",
+      "@fontsource/jetbrains-mono"
     ],
     "installers": ["backend-developer"]
   }

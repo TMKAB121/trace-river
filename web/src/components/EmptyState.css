@@ -1,0 +1,23 @@
+.stream-empty-state {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.stream-empty-state p {
+  margin: 0;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-relaxed);
+}
+
+.stream-empty-state__clear {
+  color: var(--color-accent-interactive);
+  text-decoration: underline;
+  font-size: var(--font-size-base);
+}

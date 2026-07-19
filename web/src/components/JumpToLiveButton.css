@@ -1,0 +1,16 @@
+.jump-to-live {
+  position: absolute;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: var(--z-jump-button);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-accent-interactive);
+  color: var(--color-text-inverse);
+  border-radius: var(--radius-pill);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
+  border: 1px solid var(--color-border);
+}
