@@ -1,0 +1,117 @@
+.row-wrap {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.row {
+  width: 100%;
+  height: var(--row-height-collapsed);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-left: var(--row-left-edge-width) solid transparent;
+  text-align: left;
+  overflow: hidden;
+  font-family: var(--font-family-mono);
+}
+
+.row--debug {
+  border-left-color: var(--color-level-debug);
+}
+.row--info {
+  border-left-color: var(--color-level-info);
+}
+.row--warn {
+  border-left-color: var(--color-level-warn);
+}
+.row--error {
+  border-left-color: var(--color-level-error);
+}
+.row--fatal {
+  border-left-color: var(--color-level-fatal);
+}
+.row--unknown {
+  border-left-color: var(--color-level-unknown);
+}
+
+.row--expandable:hover,
+.row--expandable:focus-visible {
+  background: var(--color-surface-row-hover);
+  cursor: pointer;
+}
+
+.row__timestamp {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.row__source {
+  flex: 0 0 auto;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row__level {
+  flex: 0 0 auto;
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-label);
+  font-size: var(--font-size-base);
+  white-space: pre;
+}
+
+.row__level--debug {
+  color: var(--color-level-debug);
+}
+.row__level--info {
+  color: var(--color-level-info);
+}
+.row__level--warn {
+  color: var(--color-level-warn);
+}
+.row__level--error {
+  color: var(--color-level-error);
+}
+.row__level--unknown {
+  color: var(--color-level-unknown);
+}
+.row__level--fatal {
+  color: var(--color-text-inverse);
+  background: var(--color-level-fatal);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+.row__message {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-base);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row__chevron {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  display: flex;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.row--expandable:hover .row__chevron,
+.row--expandable:focus-visible .row__chevron,
+.row--expanded .row__chevron {
+  opacity: 1;
+}
+
+.row__chevron-icon--expanded {
+  transform: rotate(180deg);
+}

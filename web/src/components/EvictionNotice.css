@@ -1,0 +1,6 @@
+.eviction-notice {
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}

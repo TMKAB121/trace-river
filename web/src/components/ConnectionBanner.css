@@ -1,0 +1,12 @@
+.connection-banner {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface-row-expanded-panel);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.connection-banner--error {
+  color: var(--color-level-error);
+}

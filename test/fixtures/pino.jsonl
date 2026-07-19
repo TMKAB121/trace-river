@@ -1,0 +1,3 @@
+{"level":30,"time":1752915600000,"msg":"server started","pid":1234}
+{"level":50,"time":1752915605000,"msg":"unhandled rejection","err":"boom"}
+{"level":20,"time":1752915610000,"msg":"debug tick"}

@@ -1,0 +1,11 @@
+[2026-07-19 09:15:01] local.INFO: User logged in {"user_id":42} []
+[2026-07-19 09:15:05] local.WARNING: Deprecated function called {} []
+[2026-07-19 09:15:07] local.DEBUG: Cache hit for key "settings" {} []
+[2026-07-19 09:15:10] production.ERROR: Undefined variable $foo {"exception":"boom"} []
+#0 /app/routes/api.php(42): App\Http\Controllers\ApiController->index()
+#1 {main}
+Caused by: RuntimeException: Something broke in /app/Services/Thing.php:10
+Stack trace:
+#0 /app/Services/Thing.php(10): App\Services\Thing->run()
+#1 {main}
+[2026-07-19 09:15:12] local.INFO: Request completed {} []

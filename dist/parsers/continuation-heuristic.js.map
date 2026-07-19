@@ -1,0 +1,1 @@
+{"version":3,"file":"continuation-heuristic.js","sourceRoot":"","sources":["../../src/parsers/continuation-heuristic.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AACH,MAAM,eAAe,GAAG,mDAAmD,CAAC;AAE5E,MAAM,UAAU,yBAAyB,CAAC,IAAY;IACpD,OAAO,eAAe,CAAC,IAAI,CAAC,IAAI,CAAC,CAAC;AACpC,CAAC;AAED,4FAA4F;AAC5F,MAAM,CAAC,MAAM,mBAAmB,GAAW,qDAAqD,CAAC"}
