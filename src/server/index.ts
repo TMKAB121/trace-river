@@ -21,6 +21,7 @@ import { registerUploadRoute } from "./routes/upload.js";
 import { registerSourcesRoute } from "./routes/sources.js";
 import { registerStatusRoute } from "./routes/status.js";
 import { registerReplayRoute } from "./routes/replay.js";
+import { registerDockerStatusRoute } from "./routes/docker-status.js";
 import { UPLOAD_HARD_CAP_BYTES } from "../ingest/upload.js";
 import { DEFAULT_BUFFER, DEFAULT_PORT, type ResolvedConfig } from "../shared/config.js";
 
@@ -39,6 +40,9 @@ export interface StartServerOptions {
   config?: ResolvedConfig;
   /** Directory containing the built SPA (index.html, JS/CSS). Defaults to dist/web next to this module. */
   webDist?: string;
+  /** Project root for Docker compose-project filtering. Defaults to
+   *  process.cwd(). See docs/configuration.md. */
+  cwd?: string;
 }
 
 export interface StartedServer {
@@ -67,12 +71,19 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       open: true,
       configPath: null,
       watch: [],
-      docker: {},
+      // Docker off by default when no explicit config is supplied — this
+      // fallback is only ever reached by test/dev harnesses that omit
+      // `config` (cli.ts/dev-entry.ts always resolve one via
+      // src/shared/config.ts, whose own default is `docker.enabled: true`).
+      // Keeping it off here keeps every pre-phase-2 test's `startServer()`
+      // call fully inert (no socket probing/timeouts), matching phase 1's
+      // shipped behavior exactly.
+      docker: { enabled: false },
       discovery: {},
       parsers: [],
     } satisfies ResolvedConfig);
 
-  const state = createAppState({ token, port: desiredPort, config, version });
+  const state = createAppState({ token, port: desiredPort, config, version, cwd: options.cwd });
   state.broadcaster.start();
 
   let port = desiredPort;
@@ -111,6 +122,15 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
   setupWebSocketServer(app.server, state);
 
+  // Resolved *before* returning (and therefore before the CLI opens the
+  // browser / any WS client connects) so the very first `dockerStatus`
+  // message any client receives already reflects the real, stable
+  // connectivity state — required for "no card/toast on a normal,
+  // always-worked-fine startup" (docs/specs/002-phase-2-docker.md
+  // § Components & states / Decision 3), which depends on the first message
+  // never needing a follow-up correction.
+  await state.docker.start();
+
   const url = `http://127.0.0.1:${port}/?token=${token}`;
 
   return {
@@ -120,6 +140,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     token,
     url,
     async close() {
+      state.docker.stop();
       state.broadcaster.stop();
       await app!.close();
     },
@@ -159,6 +180,7 @@ function buildApp(state: AppState, webDist: string): FastifyInstance {
   registerSourcesRoute(app, state);
   registerStatusRoute(app, state);
   registerReplayRoute(app, state);
+  registerDockerStatusRoute(app, state);
 
   if (existsSync(webDist)) {
     app.register(fastifyStatic, { root: webDist });

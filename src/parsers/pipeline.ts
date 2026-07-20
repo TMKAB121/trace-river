@@ -14,12 +14,12 @@
  *    well against it.
  */
 import { EventEmitter } from "node:events";
-import { LineSplitter } from "./line-splitter.js";
+import { LineSplitter, stripAnsi } from "./line-splitter.js";
 import { MultilineAggregator } from "./aggregator.js";
 import { BUILTIN_PARSER_CHAIN, rawParser } from "./formats/index.js";
 import type { AggregatedEntry, FormatParser, ParsedFields } from "./formats/types.js";
 import { normalizeLevel, normalizeTimestamp } from "./normalize.js";
-import type { TraceRiverLogInput } from "../shared/types.js";
+import type { LogLevel, TraceRiverLogInput } from "../shared/types.js";
 
 export type PipelineMode = "file" | "live";
 
@@ -27,6 +27,14 @@ export interface SourcePipelineOptions {
   sourceId: string;
   mode?: PipelineMode;
   chain?: FormatParser[];
+  /**
+   * Floors a normalized level up to at least this value when the entry's own
+   * level couldn't be determined (`UNKNOWN`) — used for a non-TTY docker
+   * container's stderr stream (docs/phases/phase-2-docker.md § 2.3: "stderr
+   * lines get a level floor of WARN when the app didn't specify one").
+   * Never downgrades a level the parser actually found.
+   */
+  levelFloor?: LogLevel;
 }
 
 interface ParserSampleStats {
@@ -50,6 +58,7 @@ export class SourcePipeline extends EventEmitter {
   private readonly sourceId: string;
   private readonly mode: PipelineMode;
   private readonly chain: FormatParser[];
+  private readonly levelFloor?: LogLevel;
 
   private readonly lineSplitter = new LineSplitter();
   private readonly aggregator: MultilineAggregator;
@@ -57,6 +66,10 @@ export class SourcePipeline extends EventEmitter {
   private locked: FormatParser | null = null;
   private detecting = true;
   private linesSeenForDetection = 0;
+  /** Entries scored so far during live-mode detection — the "live" analog of
+   *  `linesSeenForDetection`'s file-mode budget check (see
+   *  `handleAggregatedEntry`). Unused in "file" mode. */
+  private liveEntriesScored = 0;
   private readonly sampleCounts = new Map<FormatParser, ParserSampleStats>();
   private bufferedDetectionEntries: AggregatedEntry[] = [];
   private failureStreak = 0;
@@ -66,6 +79,7 @@ export class SourcePipeline extends EventEmitter {
     this.sourceId = options.sourceId;
     this.mode = options.mode ?? "file";
     this.chain = options.chain ?? BUILTIN_PARSER_CHAIN;
+    this.levelFloor = options.levelFloor;
     for (const parser of this.chain) {
       this.sampleCounts.set(parser, { qualifying: 0, scoreSum: 0, scoredCount: 0 });
     }
@@ -80,6 +94,19 @@ export class SourcePipeline extends EventEmitter {
     for (const line of lines) this.aggregator.addLine(line);
   }
 
+  /**
+   * Feed one already-newline-delimited raw line directly into the
+   * aggregator, bypassing the byte-oriented `LineSplitter` — used by
+   * live/docker sources whose ingest adapter does its own per-stream
+   * partial-line buffering (src/ingest/docker.ts) so it can strip Docker's
+   * own timestamp prefix per line before the format-parser chain ever sees
+   * it. Still ANSI-strips, matching `feed()`'s guarantee.
+   */
+  feedLine(rawLine: string, sourceTimestamp: string | null = null): void {
+    const withoutCr = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    this.aggregator.addLine(stripAnsi(withoutCr), sourceTimestamp);
+  }
+
   /** Signal end-of-stream: flushes any pending partial line/entry and commits detection if still open. */
   end(): void {
     for (const line of this.lineSplitter.flush()) this.aggregator.addLine(line);
@@ -91,14 +118,31 @@ export class SourcePipeline extends EventEmitter {
 
   private handleAggregatedEntry(entry: AggregatedEntry): void {
     if (this.detecting) {
-      this.bufferedDetectionEntries.push(entry);
       this.linesSeenForDetection += entry.lines.length;
       this.scoreEntry(entry);
+
+      if (this.mode === "live") {
+        // Never withhold a live entry while detection is still open (defect
+        // 002-phase-2-docker-1, spec 002 criterion 5: subscribing must show
+        // entries "within one broadcast interval"). Emit immediately,
+        // provisionally tagged with whatever parser has already earned an
+        // early lock this call (usually none yet, so `rawParser`) — the
+        // sticky-per-source-parser guarantee (docs/log-schema.md) still
+        // holds for every entry from the point detection actually commits
+        // onward; only these first few, already-visible entries keep
+        // whatever provisional tag they were shown with rather than being
+        // retroactively re-tagged.
+        this.liveEntriesScored += 1;
+        const provisional = this.checkEarlyLock() ?? rawParser;
+        this.emit("entries", [this.buildLog(entry, provisional)]);
+      } else {
+        this.bufferedDetectionEntries.push(entry);
+      }
 
       const budgetExhausted =
         this.mode === "file"
           ? this.linesSeenForDetection >= FILE_DETECTION_LINE_CAP
-          : this.bufferedDetectionEntries.length >= LIVE_DETECTION_ENTRY_CAP;
+          : this.liveEntriesScored >= LIVE_DETECTION_ENTRY_CAP;
 
       if (this.checkEarlyLock() || budgetExhausted) {
         this.commitDetection();
@@ -162,6 +206,7 @@ export class SourcePipeline extends EventEmitter {
     this.locked = null;
     this.detecting = true;
     this.linesSeenForDetection = 0;
+    this.liveEntriesScored = 0;
     this.bufferedDetectionEntries = [];
     this.failureStreak = 0;
     for (const stats of this.sampleCounts.values()) {
@@ -204,8 +249,20 @@ export class SourcePipeline extends EventEmitter {
       parser = rawParser;
     }
 
-    const level = normalizeLevel(fields.level);
-    const { timestamp, rawTimestamp } = normalizeTimestamp(fields.rawTimestamp, parser.timestampHint);
+    let level = normalizeLevel(fields.level);
+    if (level === "UNKNOWN" && this.levelFloor) level = this.levelFloor;
+
+    // Docker's own per-line RFC3339Nano timestamp (stripped by the ingest
+    // adapter into entry.sourceTimestamp) is a fallback: an app-level
+    // timestamp the format parser actually found in the text always wins.
+    let rawTimestampInput = fields.rawTimestamp;
+    let timestampHint = parser.timestampHint;
+    if ((rawTimestampInput === null || rawTimestampInput === undefined) && entry.sourceTimestamp) {
+      rawTimestampInput = entry.sourceTimestamp;
+      timestampHint = "iso-or-epoch";
+    }
+
+    const { timestamp, rawTimestamp } = normalizeTimestamp(rawTimestampInput, timestampHint);
     const multiline = entry.lines.length > 1;
 
     return {

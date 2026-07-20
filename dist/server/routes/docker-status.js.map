@@ -1,0 +1,1 @@
+{"version":3,"file":"docker-status.js","sourceRoot":"","sources":["../../../src/server/routes/docker-status.ts"],"names":[],"mappings":"AAGA;;;GAGG;AACH,MAAM,UAAU,yBAAyB,CAAC,OAAwB,EAAE,KAAe;IACjF,OAAO,CAAC,GAAG,CAAC,oBAAoB,EAAE,KAAK,IAAI,EAAE;QAC3C,OAAO,KAAK,CAAC,MAAM,CAAC,SAAS,EAAE,CAAC;IAClC,CAAC,CAAC,CAAC;AACL,CAAC"}

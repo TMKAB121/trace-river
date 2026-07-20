@@ -8,6 +8,16 @@ export interface AggregatedEntry {
   raw: string;
   /** Set by the aggregator when the per-entry cap (lines/bytes) was exceeded. */
   truncated: boolean;
+  /**
+   * The ingest adapter's own reliable timestamp for the entry's first raw
+   * line, if it supplied one out-of-band (docker sources: Docker's
+   * RFC3339Nano `timestamps: true` prefix, stripped before the line reached
+   * the format-parser chain — see src/ingest/docker.ts and
+   * docs/phases/phase-2-docker.md § 2.3). `null`/absent for file sources.
+   * Used by the pipeline as a fallback only when the format parser didn't
+   * find its own timestamp in the entry's text.
+   */
+  sourceTimestamp?: string | null;
 }
 
 export interface ParsedFields {

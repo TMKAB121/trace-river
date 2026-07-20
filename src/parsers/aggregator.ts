@@ -38,6 +38,7 @@ export class MultilineAggregator {
   private readonly clearTimeoutFn: typeof clearTimeout;
 
   private pendingLines: string[] = [];
+  private pendingTimestamps: Array<string | null> = [];
   private pendingBytes = 0;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -50,7 +51,12 @@ export class MultilineAggregator {
     this.clearTimeoutFn = options.clearTimeout ?? clearTimeout;
   }
 
-  addLine(line: string): void {
+  /**
+   * @param sourceTimestamp Optional out-of-band timestamp for this specific
+   *   line (docker sources only — see `AggregatedEntry.sourceTimestamp`).
+   *   Only the first line's value is retained per finalized entry.
+   */
+  addLine(line: string, sourceTimestamp: string | null = null): void {
     const isStart = this.pendingLines.length === 0 ? true : this.isEntryStart(line);
 
     if (isStart && this.pendingLines.length > 0) {
@@ -58,6 +64,7 @@ export class MultilineAggregator {
     }
 
     this.pendingLines.push(line);
+    this.pendingTimestamps.push(sourceTimestamp);
     this.pendingBytes += Buffer.byteLength(line, "utf8") + 1;
 
     if (this.pendingLines.length > this.maxLines || this.pendingBytes > this.maxBytes) {
@@ -84,9 +91,16 @@ export class MultilineAggregator {
 
   private finalizePending(truncated: boolean): void {
     const lines = this.pendingLines;
+    const timestamps = this.pendingTimestamps;
     this.pendingLines = [];
+    this.pendingTimestamps = [];
     this.pendingBytes = 0;
-    const entry: AggregatedEntry = { lines, raw: lines.join("\n"), truncated };
+    const entry: AggregatedEntry = {
+      lines,
+      raw: lines.join("\n"),
+      truncated,
+      sourceTimestamp: timestamps[0] ?? null,
+    };
     this.onEntry(entry);
   }
 

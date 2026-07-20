@@ -6,7 +6,7 @@
  * See docs/architecture.md § "Transport: WebSocket".
  */
 import type { WebSocket } from "ws";
-import type { ServerToClientMessage, SourceDescriptor, TraceRiverLog } from "../shared/types.js";
+import type { DockerStatus, ServerToClientMessage, SourceDescriptor, TraceRiverLog } from "../shared/types.js";
 
 export const BATCH_INTERVAL_MS = 75;
 export const BATCH_MAX_ENTRIES = 500;
@@ -121,6 +121,19 @@ export class Broadcaster {
   /** Approved protocol extension — see docs/specs/001-phase-1-core-console.md § WebSocket protocol. */
   broadcastCleared(): void {
     for (const conn of this.clients) this.sendJson(conn.ws, { type: "cleared" });
+  }
+
+  /** Sent once to a newly-connected client, third in the WS connection
+   *  sequence (docs/specs/002-phase-2-docker.md § API contract) — only when
+   *  Docker is enabled server-side. */
+  sendDockerStatus(conn: ClientConnection, status: DockerStatus, detail: string | null): void {
+    this.sendJson(conn.ws, { type: "dockerStatus", status, detail });
+  }
+
+  /** Broadcast whenever daemon connectivity status changes, in either
+   *  direction (docs/specs/002-phase-2-docker.md § API contract). */
+  broadcastDockerStatus(status: DockerStatus, detail: string | null): void {
+    for (const conn of this.clients) this.sendJson(conn.ws, { type: "dockerStatus", status, detail });
   }
 
   clientCount(): number {

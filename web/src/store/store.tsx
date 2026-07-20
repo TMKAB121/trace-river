@@ -9,7 +9,14 @@ import {
 } from "react";
 import { TraceRiverSocket, type ConnectionState } from "../api/ws";
 import { getReplay, getStatus, uploadFile as restUploadFile, ApiError } from "../api/rest";
-import { LOG_LEVELS, type LogLevel, type ServerMessage, type SourceDescriptor, type TraceRiverLog } from "../types";
+import {
+  LOG_LEVELS,
+  type DockerStatus,
+  type LogLevel,
+  type ServerMessage,
+  type SourceDescriptor,
+  type TraceRiverLog,
+} from "../types";
 import { HARD_CAP_BYTES, SOFT_WARN_BYTES, formatMB } from "../utils/format";
 
 /** Default ring-buffer capacity (architecture.md § Memory model) — used
@@ -22,6 +29,21 @@ const DEFAULT_BUFFER_CAPACITY = 50_000;
 const FREEZE_ANNOUNCE_INTERVAL_MS = 4000;
 
 const TOAST_AUTO_DISMISS_MS = 2000;
+
+const DOCKER_FAILURE_STATUSES: DockerStatus[] = ["not_installed", "not_running", "permission_denied"];
+
+function dockerStatusAnnouncement(status: DockerStatus): string {
+  switch (status) {
+    case "not_installed":
+      return "Docker not detected.";
+    case "not_running":
+      return "Docker not running.";
+    case "permission_denied":
+      return "Docker permission denied.";
+    case "connected":
+      return "";
+  }
+}
 
 /** Mirrors `--debounce-search` (design-system.md § Motion) — CSS custom
  *  properties aren't readable as plain numbers from JS, so this is kept in
@@ -59,6 +81,20 @@ export interface AppState {
   toast: ToastState | null;
   announcement: string;
   uploads: Record<string, UploadProgress>;
+  /** `null` until the first `dockerStatus` message ever arrives (or a
+   *  docker-kind source is seen in `sources`) — see `useDockerEnabled`.
+   *  Absence of both signals for the life of the connection means
+   *  `docker.enabled: false` server-side (spec 002 § Layout). */
+  dockerStatus: DockerStatus | null;
+  dockerStatusDetail: string | null;
+  /** Status-card dismissals are per-status-value and session-only, never
+   *  sent to the server (spec 002 § Components & states — Docker status card). */
+  dismissedDockerStatuses: Set<DockerStatus>;
+  /** "Show all containers" — purely client-side render filter (spec 002
+   *  Decision 1); seeded once from `GET /api/status`'s
+   *  `dockerAllContainersDefault`, then left alone once the user toggles it. */
+  showAllContainers: boolean;
+  showAllContainersTouched: boolean;
 }
 
 const initialState: AppState = {
@@ -77,6 +113,11 @@ const initialState: AppState = {
   toast: null,
   announcement: "",
   uploads: {},
+  dockerStatus: null,
+  dockerStatusDetail: null,
+  dismissedDockerStatuses: new Set(),
+  showAllContainers: false,
+  showAllContainersTouched: false,
 };
 
 type Action =
@@ -102,7 +143,11 @@ type Action =
   | { type: "SET_ANNOUNCEMENT"; message: string }
   | { type: "UPLOAD_STARTED"; id: string; filename: string; totalBytes: number }
   | { type: "UPLOAD_PROGRESS"; id: string; loadedBytes: number; totalBytes: number }
-  | { type: "UPLOAD_SETTLED"; id: string };
+  | { type: "UPLOAD_SETTLED"; id: string }
+  | { type: "SET_DOCKER_STATUS"; status: DockerStatus; detail: string | null }
+  | { type: "SET_SHOW_ALL_CONTAINERS_DEFAULT"; value: boolean }
+  | { type: "TOGGLE_SHOW_ALL_CONTAINERS" }
+  | { type: "DISMISS_DOCKER_STATUS_CARD"; status: DockerStatus };
 
 function sortedSourceOrder(sources: Record<string, SourceDescriptor>): string[] {
   return Object.values(sources)
@@ -294,6 +339,22 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, uploads };
     }
 
+    case "SET_DOCKER_STATUS":
+      return { ...state, dockerStatus: action.status, dockerStatusDetail: action.detail };
+
+    case "SET_SHOW_ALL_CONTAINERS_DEFAULT":
+      if (state.showAllContainersTouched) return state;
+      return { ...state, showAllContainers: action.value };
+
+    case "TOGGLE_SHOW_ALL_CONTAINERS":
+      return { ...state, showAllContainers: !state.showAllContainers, showAllContainersTouched: true };
+
+    case "DISMISS_DOCKER_STATUS_CARD": {
+      const next = new Set(state.dismissedDockerStatuses);
+      next.add(action.status);
+      return { ...state, dismissedDockerStatuses: next };
+    }
+
     default:
       return state;
   }
@@ -313,6 +374,8 @@ export interface AppActions {
   clearLogs: () => void;
   dismissToast: () => void;
   startUpload: (file: File) => Promise<void>;
+  toggleShowAllContainers: () => void;
+  dismissDockerStatusCard: (status: DockerStatus) => void;
 }
 
 interface AppStoreContextValue {
@@ -345,10 +408,20 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const lastIdRef = useRef<number>(-Infinity);
   const resyncInFlightRef = useRef(false);
   const resyncPendingRef = useRef(false);
+  // Mirrors state.sources, updated after every render — read inside the WS
+  // message handler (whose closure is fixed at mount) to know a source's
+  // *prior* value when a docker sourceState/dockerStatus transition arrives
+  // (spec 002 § Accessibility — announce transitions, not steady states).
+  const sourcesRef = useRef<Record<string, SourceDescriptor>>({});
+  const dockerStatusRef = useRef<DockerStatus | null>(null);
 
   useEffect(() => {
     lastIdRef.current = state.entries.length > 0 ? state.entries[state.entries.length - 1].id : -Infinity;
   }, [state.entries]);
+
+  useEffect(() => {
+    sourcesRef.current = state.sources;
+  }, [state.sources]);
 
   // --- WS connection lifecycle -------------------------------------------
   useEffect(() => {
@@ -390,9 +463,43 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           case "sources":
             dispatch({ type: "REPLACE_SOURCES", sources: msg.sources });
             break;
-          case "sourceState":
+          case "sourceState": {
+            // Look up the *prior* value before dispatching — needed to
+            // detect a subscribed docker source's live<->stopped transition
+            // for the live-region announcement (spec 002 § Accessibility).
+            const prior = sourcesRef.current[msg.id];
             dispatch({ type: "SOURCE_STATE", id: msg.id, state: msg.state, detail: msg.detail ?? null });
+            if (prior && prior.kind === "docker" && prior.subscribed && prior.state !== msg.state) {
+              if (msg.state === "stopped" && prior.state === "live") {
+                dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} stopped.` });
+              } else if (msg.state === "live" && prior.state === "stopped") {
+                dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} restarted.` });
+              }
+            }
             break;
+          }
+          case "dockerStatus": {
+            const prevStatus = dockerStatusRef.current;
+            dockerStatusRef.current = msg.status;
+            dispatch({ type: "SET_DOCKER_STATUS", status: msg.status, detail: msg.detail ?? null });
+
+            if (msg.status === "connected") {
+              // "Docker connected" toast + announcement only on a
+              // mid-session recovery transition (spec 002 Decision 3) —
+              // silent on a normal first connect (prevStatus === null).
+              if (prevStatus !== null && DOCKER_FAILURE_STATUSES.includes(prevStatus)) {
+                const count = Object.values(sourcesRef.current).filter((s) => s.kind === "docker").length;
+                const message = `Docker connected — ${count} container(s) found`;
+                dispatch({ type: "SHOW_TOAST", message, autoDismissMs: TOAST_AUTO_DISMISS_MS });
+                dispatch({ type: "SET_ANNOUNCEMENT", message });
+              }
+            } else if (prevStatus !== msg.status) {
+              // Transition *into* a (new) failure status — announce once,
+              // not on every 10s poll tick that repeats the same value.
+              dispatch({ type: "SET_ANNOUNCEMENT", message: dockerStatusAnnouncement(msg.status) });
+            }
+            break;
+          }
           case "dropped":
             dispatch({ type: "SHOW_TOAST", message: `${msg.count} entries dropped — resyncing…` });
             dispatch({ type: "SET_ANNOUNCEMENT", message: `${msg.count} entries dropped, resyncing` });
@@ -415,10 +522,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     return () => socket.close();
   }, []);
 
-  // --- Initial buffer capacity -------------------------------------------
+  // --- Initial buffer capacity + "Show all containers" default -----------
   useEffect(() => {
     getStatus()
-      .then((status) => dispatch({ type: "SET_BUFFER_CAPACITY", capacity: status.bufferCapacity }))
+      .then((status) => {
+        dispatch({ type: "SET_BUFFER_CAPACITY", capacity: status.bufferCapacity });
+        dispatch({ type: "SET_SHOW_ALL_CONTAINERS_DEFAULT", value: status.dockerAllContainersDefault });
+      })
       .catch(() => {
         // Keep the architecture.md default; connection state UI already
         // surfaces auth/connectivity failures.
@@ -479,6 +589,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         socketRef.current?.send({ type: "clear" });
       },
       dismissToast: () => dispatch({ type: "DISMISS_TOAST" }),
+      toggleShowAllContainers: () => dispatch({ type: "TOGGLE_SHOW_ALL_CONTAINERS" }),
+      dismissDockerStatusCard: (status) => dispatch({ type: "DISMISS_DOCKER_STATUS_CARD", status }),
       startUpload: async (file: File) => {
         if (file.size > HARD_CAP_BYTES) {
           window.alert("This file is over the 500 MB limit and can't be loaded.");
@@ -589,4 +701,28 @@ export function useEvicted(): boolean {
 export function useOrderedSources(): SourceDescriptor[] {
   const { state } = useAppStore();
   return useMemo(() => state.sourceOrder.map((id) => state.sources[id]).filter(Boolean), [state.sourceOrder, state.sources]);
+}
+
+/** True once Docker is known to be enabled server-side: either a
+ *  `dockerStatus` message has ever arrived, or a `kind: "docker"` source has
+ *  ever been seen. Both are absent for the life of the connection iff
+ *  `docker.enabled: false` (spec 002 § Layout) — there is no explicit
+ *  "disabled" signal, so this is inferred from the two signals the protocol
+ *  does send, rather than a timeout. See frontend handoff for this feature. */
+export function useDockerEnabled(): boolean {
+  const { state } = useAppStore();
+  return useMemo(() => {
+    if (state.dockerStatus !== null) return true;
+    return Object.values(state.sources).some((s) => s.kind === "docker");
+  }, [state.dockerStatus, state.sources]);
+}
+
+export function useContainerSources(): SourceDescriptor[] {
+  const ordered = useOrderedSources();
+  return useMemo(() => ordered.filter((s) => s.kind === "docker"), [ordered]);
+}
+
+export function useFileSources(): SourceDescriptor[] {
+  const ordered = useOrderedSources();
+  return useMemo(() => ordered.filter((s) => s.kind === "file"), [ordered]);
 }

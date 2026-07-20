@@ -7,6 +7,7 @@ export function registerStatusRoute(fastify, state) {
             bufferCapacity: state.ringBuffer.getCapacity(),
             bufferUsed: state.ringBuffer.size(),
             uptimeMs: Date.now() - state.startedAt,
+            dockerAllContainersDefault: state.config.docker.allContainers ?? false,
         };
     });
 }
