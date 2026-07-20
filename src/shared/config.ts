@@ -74,6 +74,9 @@ export interface CliFlags {
   open?: boolean; // false when --no-open passed
   config?: string;
   buffer?: number;
+  /** `--all-containers` — only forwarded when the flag was actually passed
+   *  (see src/cli.ts), so CLI > file > built-in-default precedence holds. */
+  allContainers?: boolean;
 }
 
 /**
@@ -112,13 +115,23 @@ export function resolveConfig(flags: CliFlags, cwd: string = process.cwd()): Res
   const buffer = flags.buffer ?? fileConfig.buffer ?? DEFAULT_BUFFER;
   const open = flags.open ?? fileConfig.open ?? true;
 
+  // docker.* is fully resolved here (unlike watch/discovery/parsers, left as
+  // raw file-config passthrough) because phase 2 actually acts on it — see
+  // docs/configuration.md § docker.
+  const docker: DockerConfig = {
+    enabled: fileConfig.docker?.enabled ?? true,
+    allContainers: flags.allContainers ?? fileConfig.docker?.allContainers ?? false,
+    include: fileConfig.docker?.include ?? [],
+    exclude: fileConfig.docker?.exclude ?? [],
+  };
+
   return {
     port,
     buffer,
     open,
     configPath: resolvedConfigPath,
     watch: fileConfig.watch ?? [],
-    docker: fileConfig.docker ?? {},
+    docker,
     discovery: fileConfig.discovery ?? {},
     parsers: fileConfig.parsers ?? [],
   };

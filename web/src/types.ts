@@ -34,15 +34,18 @@ export interface TraceRiverLog {
   multiline: boolean;
 }
 
-/** Phase-1 generic SourceDescriptor shape (spec 001 § API contract). */
+/** Phase-1 generic SourceDescriptor shape (spec 001 § API contract),
+ *  extended by spec 002 § API contract with the optional `docker` field. */
 export interface SourceDescriptor {
   /** Namespaced id, matches TraceRiverLog.source exactly, e.g. "file:dump.log". */
   id: string;
-  /** Phase 1 only ever produces "file"; "docker"/"local" reserved for later phases. */
+  /** Phase 1 only ever produces "file"; phase 2 adds "docker"; "local" reserved for phase 3. */
   kind: "file" | "docker" | "local";
   /** Display name, e.g. "dump.log". */
   label: string;
-  /** Checkbox state. */
+  /** Checkbox state. For "docker" sources this is server-global state, shared
+   *  across every connected tab (spec 002 § Interaction specs — Decision 5),
+   *  not a per-connection delivery flag as it is for files. */
   subscribed: boolean;
   /** Toggle state — client-side only, purely filters rendering. */
   visible: boolean;
@@ -54,15 +57,29 @@ export interface SourceDescriptor {
   detail: string | null;
   /** Epoch ms — sidebar sort order (oldest first). */
   createdAt: number;
+  /** Present only when kind === "docker" (spec 002 § API contract).
+   *  `inCurrentProject` drives the default "Show all containers" render
+   *  filter — a purely client-side decision, never a discovery-time exclusion. */
+  docker?: {
+    image: string;
+    composeProject: string | null;
+    composeService: string | null;
+    inCurrentProject: boolean;
+  };
 }
 
-/** Server -> client WS message shapes (architecture.md + spec 001 extension). */
+/** Docker daemon connectivity, mirrored WS-push + `GET /api/docker/status`
+ *  (spec 002 § API contract). */
+export type DockerStatus = "not_installed" | "not_running" | "permission_denied" | "connected";
+
+/** Server -> client WS message shapes (architecture.md + spec 001/002 extensions). */
 export type ServerMessage =
   | { type: "entries"; entries: TraceRiverLog[] }
   | { type: "sources"; sources: SourceDescriptor[] }
   | { type: "sourceState"; id: string; state: SourceDescriptor["state"]; detail?: string | null }
   | { type: "dropped"; count: number }
-  | { type: "cleared" };
+  | { type: "cleared" }
+  | { type: "dockerStatus"; status: DockerStatus; detail: string | null };
 
 /** Client -> server WS message shapes. */
 export type ClientMessage =
@@ -76,4 +93,7 @@ export interface StatusResponse {
   bufferCapacity: number;
   bufferUsed: number;
   uptimeMs: number;
+  /** Resolved `docker.allContainers` config / `--all-containers` flag —
+   *  seeds the "Show all containers" toggle's initial state (spec 002). */
+  dockerAllContainersDefault: boolean;
 }

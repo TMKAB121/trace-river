@@ -10,6 +10,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { AppState } from "./app-state.js";
 import { isAllowedHost, isAllowedOrigin } from "./auth.js";
 import { tokensMatch } from "./token.js";
+import type { ClientConnection } from "./broadcaster.js";
 import type { ClientToServerMessage } from "../shared/types.js";
 
 export function setupWebSocketServer(server: HttpServer, state: AppState): WebSocketServer {
@@ -53,9 +54,15 @@ function onConnection(ws: WebSocket, state: AppState): void {
   const conn = state.broadcaster.addClient(ws);
 
   // Replay-on-connect, in order: buffered ring buffer contents, then the
-  // current source list, then live traffic (handled by future broadcasts).
+  // current source list, then (if Docker is enabled) the current daemon
+  // connectivity status, then live traffic (handled by future broadcasts).
+  // See docs/specs/002-phase-2-docker.md § "WS connection sequence".
   state.broadcaster.sendReplay(conn, state.ringBuffer.all());
   state.broadcaster.sendSources(conn, state.sources.list());
+  if (state.config.docker.enabled ?? true) {
+    const { status, detail } = state.docker.getStatus();
+    state.broadcaster.sendDockerStatus(conn, status, detail);
+  }
 
   ws.on("message", (data) => {
     let message: ClientToServerMessage;
@@ -67,10 +74,10 @@ function onConnection(ws: WebSocket, state: AppState): void {
 
     switch (message.type) {
       case "subscribe":
-        state.broadcaster.subscribe(conn, message.sourceIds);
+        handleSubscribeToggle(state, conn, message.sourceIds, true);
         break;
       case "unsubscribe":
-        state.broadcaster.unsubscribe(conn, message.sourceIds);
+        handleSubscribeToggle(state, conn, message.sourceIds, false);
         break;
       case "clear":
         state.ringBuffer.clear();
@@ -84,6 +91,38 @@ function onConnection(ws: WebSocket, state: AppState): void {
   const cleanup = () => state.broadcaster.removeClient(conn);
   ws.on("close", cleanup);
   ws.on("error", cleanup);
+}
+
+/**
+ * `subscribe`/`unsubscribe` reuse the same message shape for every source
+ * kind, but the *effect* differs (docs/specs/002-phase-2-docker.md
+ * § Interaction specs, Decision 5): a file-source id is a per-connection
+ * delivery filter (unchanged from spec 001); a `docker:<name>` id flips the
+ * shared `SourceDescriptor.subscribed` flag server-globally and actually
+ * starts/stops that container's log stream, broadcast to every client.
+ */
+function handleSubscribeToggle(
+  state: AppState,
+  conn: ClientConnection,
+  sourceIds: string[],
+  subscribe: boolean,
+): void {
+  const dockerIds: string[] = [];
+  const otherIds: string[] = [];
+  for (const id of sourceIds) {
+    const kind = state.sources.get(id)?.kind ?? (id.startsWith("docker:") ? "docker" : undefined);
+    if (kind === "docker") dockerIds.push(id);
+    else otherIds.push(id);
+  }
+
+  if (otherIds.length > 0) {
+    if (subscribe) state.broadcaster.subscribe(conn, otherIds);
+    else state.broadcaster.unsubscribe(conn, otherIds);
+  }
+
+  for (const id of dockerIds) {
+    void state.docker.setSubscribed(id, subscribe);
+  }
 }
 
 function safeParseUrl(rawUrl: string | undefined, host: string | undefined): URL | null {

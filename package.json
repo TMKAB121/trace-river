@@ -1,6 +1,6 @@
 {
   "name": "traceriver",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "description": "Local log console — consolidate Docker, framework, and file logs into one unified stream and surface the errors. Under active development.",
   "keywords": [
     "logs",
@@ -42,6 +42,7 @@
   "dependencies": {
     "@fastify/static": "^8.0.0",
     "commander": "^12.1.0",
+    "dockerode": "^5.0.1",
     "fastify": "^5.0.0",
     "ws": "^8.18.0"
   },

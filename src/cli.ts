@@ -19,7 +19,7 @@ function parseIntArg(value: string): number {
 }
 
 const program = new Command();
-program.name("traceriver").description("Local log console").version("0.0.1");
+program.name("traceriver").description("Local log console").version("0.2.0");
 
 const startCommand = program
   .command("start")
@@ -32,7 +32,8 @@ const startCommand = program
   .option("--no-open", "Don't open the browser automatically")
   .option("--config <path>", "Path to a traceriver.json (default: ./traceriver.json if present)")
   .option("--buffer <n>", "Ring buffer capacity in entries (default 50000)", parseIntArg)
-  .action(async (opts: { port?: number; open?: boolean; config?: string; buffer?: number }) => {
+  .option("--all-containers", "Include Docker containers outside the current compose project")
+  .action(async (opts: { port?: number; open?: boolean; config?: string; buffer?: number; allContainers?: boolean }) => {
     try {
       // commander always yields a definite boolean for --no-open-style flags
       // (default true); only forward it when the user actually passed the flag,
@@ -45,6 +46,7 @@ const startCommand = program
         open: openExplicit ? opts.open : undefined,
         config: opts.config,
         buffer: opts.buffer,
+        allContainers: opts.allContainers,
       });
 
       const strictPort = opts.port !== undefined;

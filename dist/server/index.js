@@ -18,6 +18,7 @@ import { registerUploadRoute } from "./routes/upload.js";
 import { registerSourcesRoute } from "./routes/sources.js";
 import { registerStatusRoute } from "./routes/status.js";
 import { registerReplayRoute } from "./routes/replay.js";
+import { registerDockerStatusRoute } from "./routes/docker-status.js";
 import { UPLOAD_HARD_CAP_BYTES } from "../ingest/upload.js";
 import { DEFAULT_BUFFER, DEFAULT_PORT } from "../shared/config.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,7 @@ export async function startServer(options = {}) {
     const desiredPort = options.port ?? DEFAULT_PORT;
     const strictPort = options.strictPort ?? false;
     const token = options.token ?? generateSessionToken();
-    const version = options.version ?? "0.0.1";
+    const version = options.version ?? "0.2.0";
     const webDist = options.webDist ?? DEFAULT_WEB_DIST;
     const config = options.config ??
         {
@@ -36,11 +37,18 @@ export async function startServer(options = {}) {
             open: true,
             configPath: null,
             watch: [],
-            docker: {},
+            // Docker off by default when no explicit config is supplied — this
+            // fallback is only ever reached by test/dev harnesses that omit
+            // `config` (cli.ts/dev-entry.ts always resolve one via
+            // src/shared/config.ts, whose own default is `docker.enabled: true`).
+            // Keeping it off here keeps every pre-phase-2 test's `startServer()`
+            // call fully inert (no socket probing/timeouts), matching phase 1's
+            // shipped behavior exactly.
+            docker: { enabled: false },
             discovery: {},
             parsers: [],
         };
-    const state = createAppState({ token, port: desiredPort, config, version });
+    const state = createAppState({ token, port: desiredPort, config, version, cwd: options.cwd });
     state.broadcaster.start();
     let port = desiredPort;
     let app = null;
@@ -75,6 +83,14 @@ export async function startServer(options = {}) {
         throw lastError ?? new Error("Unable to bind to any port");
     }
     setupWebSocketServer(app.server, state);
+    // Resolved *before* returning (and therefore before the CLI opens the
+    // browser / any WS client connects) so the very first `dockerStatus`
+    // message any client receives already reflects the real, stable
+    // connectivity state — required for "no card/toast on a normal,
+    // always-worked-fine startup" (docs/specs/002-phase-2-docker.md
+    // § Components & states / Decision 3), which depends on the first message
+    // never needing a follow-up correction.
+    await state.docker.start();
     const url = `http://127.0.0.1:${port}/?token=${token}`;
     return {
         app,
@@ -83,6 +99,7 @@ export async function startServer(options = {}) {
         token,
         url,
         async close() {
+            state.docker.stop();
             state.broadcaster.stop();
             await app.close();
         },
@@ -118,6 +135,7 @@ function buildApp(state, webDist) {
     registerSourcesRoute(app, state);
     registerStatusRoute(app, state);
     registerReplayRoute(app, state);
+    registerDockerStatusRoute(app, state);
     if (existsSync(webDist)) {
         app.register(fastifyStatic, { root: webDist });
     }

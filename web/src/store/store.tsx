@@ -9,7 +9,14 @@ import {
 } from "react";
 import { TraceRiverSocket, type ConnectionState } from "../api/ws";
 import { getReplay, getStatus, uploadFile as restUploadFile, ApiError } from "../api/rest";
-import { LOG_LEVELS, type LogLevel, type ServerMessage, type SourceDescriptor, type TraceRiverLog } from "../types";
+import {
+  LOG_LEVELS,
+  type DockerStatus,
+  type LogLevel,
+  type ServerMessage,
+  type SourceDescriptor,
+  type TraceRiverLog,
+} from "../types";
 import { HARD_CAP_BYTES, SOFT_WARN_BYTES, formatMB } from "../utils/format";
 
 /** Default ring-buffer capacity (architecture.md § Memory model) — used
@@ -22,6 +29,35 @@ const DEFAULT_BUFFER_CAPACITY = 50_000;
 const FREEZE_ANNOUNCE_INTERVAL_MS = 4000;
 
 const TOAST_AUTO_DISMISS_MS = 2000;
+
+const DOCKER_FAILURE_STATUSES: DockerStatus[] = ["not_installed", "not_running", "permission_denied"];
+
+/** Grace window (ms), started once the WS reaches "connected", to wait for
+ *  either Docker-enabled signal (a `dockerStatus` message or a `kind:
+ *  "docker"` source) before concluding Docker is disabled server-side. The
+ *  server always sends the source list immediately on connect and, when
+ *  `docker.enabled`, the `dockerStatus` message right behind it in the same
+ *  handler (see `src/server/ws.ts` `onConnection`) — both land within one
+ *  network round trip of each other, so this only needs to be long enough to
+ *  absorb that jitter, not to wait out anything user-perceptible. Design
+ *  review 002 Finding 2: without this, a fresh connection with zero matching
+ *  containers and no file sources had no signal to distinguish "still
+ *  finding out" from "disabled," so the sidebar rendered phase‑1's flat
+ *  fallback instead of the spec'd sectioned "Checking Docker…" state. */
+const DOCKER_SETTLE_GUARD_MS = 400;
+
+function dockerStatusAnnouncement(status: DockerStatus): string {
+  switch (status) {
+    case "not_installed":
+      return "Docker not detected.";
+    case "not_running":
+      return "Docker not running.";
+    case "permission_denied":
+      return "Docker permission denied.";
+    case "connected":
+      return "";
+  }
+}
 
 /** Mirrors `--debounce-search` (design-system.md § Motion) — CSS custom
  *  properties aren't readable as plain numbers from JS, so this is kept in
@@ -59,6 +95,29 @@ export interface AppState {
   toast: ToastState | null;
   announcement: string;
   uploads: Record<string, UploadProgress>;
+  /** `null` until the first `dockerStatus` message ever arrives (or a
+   *  docker-kind source is seen in `sources`) — see `useDockerAvailability`.
+   *  Absence of both signals for the life of the connection means
+   *  `docker.enabled: false` server-side (spec 002 § Layout). */
+  dockerStatus: DockerStatus | null;
+  dockerStatusDetail: string | null;
+  /** Tri-state read of whether Docker is enabled server-side, inferred
+   *  purely from the two signals the protocol already sends (no new API
+   *  field — design review 002 explicitly ratified inference over an
+   *  explicit flag): "unknown" until either a `dockerStatus` message or a
+   *  `kind: "docker"` source has been seen, or the post-connect settle guard
+   *  gives up waiting for both (see `DOCKER_SETTLE_GUARD_MS`); "enabled"/
+   *  "disabled" are terminal for the life of the page (`docker.enabled`
+   *  can't change at runtime) — see `useDockerAvailability`. */
+  dockerAvailability: "unknown" | "enabled" | "disabled";
+  /** Status-card dismissals are per-status-value and session-only, never
+   *  sent to the server (spec 002 § Components & states — Docker status card). */
+  dismissedDockerStatuses: Set<DockerStatus>;
+  /** "Show all containers" — purely client-side render filter (spec 002
+   *  Decision 1); seeded once from `GET /api/status`'s
+   *  `dockerAllContainersDefault`, then left alone once the user toggles it. */
+  showAllContainers: boolean;
+  showAllContainersTouched: boolean;
 }
 
 const initialState: AppState = {
@@ -77,6 +136,12 @@ const initialState: AppState = {
   toast: null,
   announcement: "",
   uploads: {},
+  dockerStatus: null,
+  dockerStatusDetail: null,
+  dockerAvailability: "unknown",
+  dismissedDockerStatuses: new Set(),
+  showAllContainers: false,
+  showAllContainersTouched: false,
 };
 
 type Action =
@@ -102,12 +167,29 @@ type Action =
   | { type: "SET_ANNOUNCEMENT"; message: string }
   | { type: "UPLOAD_STARTED"; id: string; filename: string; totalBytes: number }
   | { type: "UPLOAD_PROGRESS"; id: string; loadedBytes: number; totalBytes: number }
-  | { type: "UPLOAD_SETTLED"; id: string };
+  | { type: "UPLOAD_SETTLED"; id: string }
+  | { type: "SET_DOCKER_STATUS"; status: DockerStatus; detail: string | null }
+  | { type: "SET_SHOW_ALL_CONTAINERS_DEFAULT"; value: boolean }
+  | { type: "TOGGLE_SHOW_ALL_CONTAINERS" }
+  | { type: "DISMISS_DOCKER_STATUS_CARD"; status: DockerStatus }
+  | { type: "SETTLE_DOCKER_AVAILABILITY"; value: "enabled" | "disabled" };
 
 function sortedSourceOrder(sources: Record<string, SourceDescriptor>): string[] {
   return Object.values(sources)
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((s) => s.id);
+}
+
+/** `dockerAvailability` only ever moves out of "unknown" once, in whichever
+ *  direction is learned first — `docker.enabled` can't flip at runtime, so
+ *  neither a later `dockerStatus` message nor the settle-guard timeout
+ *  should ever override an already-settled value (see `useDockerAvailability`). */
+function withDockerAvailabilityFromSources(
+  current: AppState["dockerAvailability"],
+  sources: Record<string, SourceDescriptor>,
+): AppState["dockerAvailability"] {
+  if (current !== "unknown") return current;
+  return Object.values(sources).some((s) => s.kind === "docker") ? "enabled" : current;
 }
 
 /** Merge new entries, deduping against anything already stored by id (a
@@ -164,7 +246,12 @@ function reducer(state: AppState, action: Action): AppState {
           entryCount: incoming.subscribed ? incoming.entryCount : prior.entryCount,
         };
       }
-      return { ...state, sources, sourceOrder: sortedSourceOrder(sources) };
+      return {
+        ...state,
+        sources,
+        sourceOrder: sortedSourceOrder(sources),
+        dockerAvailability: withDockerAvailabilityFromSources(state.dockerAvailability, sources),
+      };
     }
 
     case "UPSERT_SOURCE": {
@@ -177,7 +264,12 @@ function reducer(state: AppState, action: Action): AppState {
           }
         : action.source;
       const sources = { ...state.sources, [action.source.id]: merged };
-      return { ...state, sources, sourceOrder: sortedSourceOrder(sources) };
+      return {
+        ...state,
+        sources,
+        sourceOrder: sortedSourceOrder(sources),
+        dockerAvailability: withDockerAvailabilityFromSources(state.dockerAvailability, sources),
+      };
     }
 
     case "SOURCE_STATE": {
@@ -294,6 +386,31 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, uploads };
     }
 
+    case "SET_DOCKER_STATUS":
+      return {
+        ...state,
+        dockerStatus: action.status,
+        dockerStatusDetail: action.detail,
+        dockerAvailability: "enabled",
+      };
+
+    case "SETTLE_DOCKER_AVAILABILITY":
+      if (state.dockerAvailability !== "unknown") return state;
+      return { ...state, dockerAvailability: action.value };
+
+    case "SET_SHOW_ALL_CONTAINERS_DEFAULT":
+      if (state.showAllContainersTouched) return state;
+      return { ...state, showAllContainers: action.value };
+
+    case "TOGGLE_SHOW_ALL_CONTAINERS":
+      return { ...state, showAllContainers: !state.showAllContainers, showAllContainersTouched: true };
+
+    case "DISMISS_DOCKER_STATUS_CARD": {
+      const next = new Set(state.dismissedDockerStatuses);
+      next.add(action.status);
+      return { ...state, dismissedDockerStatuses: next };
+    }
+
     default:
       return state;
   }
@@ -313,6 +430,8 @@ export interface AppActions {
   clearLogs: () => void;
   dismissToast: () => void;
   startUpload: (file: File) => Promise<void>;
+  toggleShowAllContainers: () => void;
+  dismissDockerStatusCard: (status: DockerStatus) => void;
 }
 
 interface AppStoreContextValue {
@@ -345,10 +464,35 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const lastIdRef = useRef<number>(-Infinity);
   const resyncInFlightRef = useRef(false);
   const resyncPendingRef = useRef(false);
+  // Mirrors state.sources, updated after every render — read inside the WS
+  // message handler (whose closure is fixed at mount) to know a source's
+  // *prior* value when a docker sourceState/dockerStatus transition arrives
+  // (spec 002 § Accessibility — announce transitions, not steady states).
+  const sourcesRef = useRef<Record<string, SourceDescriptor>>({});
+  const dockerStatusRef = useRef<DockerStatus | null>(null);
+  // Mirrors state.dockerAvailability — read (and cleared) from the settle-
+  // guard timeout below, whose closure is fixed at mount (design review 002
+  // Finding 2 / see DOCKER_SETTLE_GUARD_MS).
+  const dockerAvailabilityRef = useRef<AppState["dockerAvailability"]>("unknown");
+  const dockerSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     lastIdRef.current = state.entries.length > 0 ? state.entries[state.entries.length - 1].id : -Infinity;
   }, [state.entries]);
+
+  useEffect(() => {
+    sourcesRef.current = state.sources;
+  }, [state.sources]);
+
+  useEffect(() => {
+    dockerAvailabilityRef.current = state.dockerAvailability;
+    // Once settled (in either direction), the guard timer has nothing left
+    // to do — clear it so it can't fire a no-op after unmount races.
+    if (state.dockerAvailability !== "unknown" && dockerSettleTimerRef.current) {
+      clearTimeout(dockerSettleTimerRef.current);
+      dockerSettleTimerRef.current = null;
+    }
+  }, [state.dockerAvailability]);
 
   // --- WS connection lifecycle -------------------------------------------
   useEffect(() => {
@@ -381,6 +525,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const socket = new TraceRiverSocket({
       onStateChange: (connState: ConnectionState) => {
         dispatch({ type: "SET_CONNECTION", state: connState });
+        // Design review 002 Finding 2: once the WS has actually connected,
+        // the server sends `sources` (always) and, if `docker.enabled`,
+        // `dockerStatus` right behind it — both arrive within one round
+        // trip of each other. If dockerAvailability is still "unknown"
+        // DOCKER_SETTLE_GUARD_MS after connecting, no dockerStatus is
+        // coming and no docker source exists, so `docker.enabled: false`
+        // is the only remaining explanation — settle to "disabled" so the
+        // sidebar falls back to the flat phase-1 layout instead of getting
+        // stuck showing "Checking Docker…" forever (including against a
+        // stale phase-1 build that never sends `dockerStatus` at all).
+        if (connState === "connected" && dockerAvailabilityRef.current === "unknown") {
+          if (dockerSettleTimerRef.current) clearTimeout(dockerSettleTimerRef.current);
+          dockerSettleTimerRef.current = setTimeout(() => {
+            dockerSettleTimerRef.current = null;
+            dispatch({ type: "SETTLE_DOCKER_AVAILABILITY", value: "disabled" });
+          }, DOCKER_SETTLE_GUARD_MS);
+        }
       },
       onMessage: (msg: ServerMessage) => {
         switch (msg.type) {
@@ -390,9 +551,43 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
           case "sources":
             dispatch({ type: "REPLACE_SOURCES", sources: msg.sources });
             break;
-          case "sourceState":
+          case "sourceState": {
+            // Look up the *prior* value before dispatching — needed to
+            // detect a subscribed docker source's live<->stopped transition
+            // for the live-region announcement (spec 002 § Accessibility).
+            const prior = sourcesRef.current[msg.id];
             dispatch({ type: "SOURCE_STATE", id: msg.id, state: msg.state, detail: msg.detail ?? null });
+            if (prior && prior.kind === "docker" && prior.subscribed && prior.state !== msg.state) {
+              if (msg.state === "stopped" && prior.state === "live") {
+                dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} stopped.` });
+              } else if (msg.state === "live" && prior.state === "stopped") {
+                dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} restarted.` });
+              }
+            }
             break;
+          }
+          case "dockerStatus": {
+            const prevStatus = dockerStatusRef.current;
+            dockerStatusRef.current = msg.status;
+            dispatch({ type: "SET_DOCKER_STATUS", status: msg.status, detail: msg.detail ?? null });
+
+            if (msg.status === "connected") {
+              // "Docker connected" toast + announcement only on a
+              // mid-session recovery transition (spec 002 Decision 3) —
+              // silent on a normal first connect (prevStatus === null).
+              if (prevStatus !== null && DOCKER_FAILURE_STATUSES.includes(prevStatus)) {
+                const count = Object.values(sourcesRef.current).filter((s) => s.kind === "docker").length;
+                const message = `Docker connected — ${count} container(s) found`;
+                dispatch({ type: "SHOW_TOAST", message, autoDismissMs: TOAST_AUTO_DISMISS_MS });
+                dispatch({ type: "SET_ANNOUNCEMENT", message });
+              }
+            } else if (prevStatus !== msg.status) {
+              // Transition *into* a (new) failure status — announce once,
+              // not on every 10s poll tick that repeats the same value.
+              dispatch({ type: "SET_ANNOUNCEMENT", message: dockerStatusAnnouncement(msg.status) });
+            }
+            break;
+          }
           case "dropped":
             dispatch({ type: "SHOW_TOAST", message: `${msg.count} entries dropped — resyncing…` });
             dispatch({ type: "SET_ANNOUNCEMENT", message: `${msg.count} entries dropped, resyncing` });
@@ -412,13 +607,22 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     });
     socketRef.current = socket;
     socket.start();
-    return () => socket.close();
+    return () => {
+      socket.close();
+      if (dockerSettleTimerRef.current) {
+        clearTimeout(dockerSettleTimerRef.current);
+        dockerSettleTimerRef.current = null;
+      }
+    };
   }, []);
 
-  // --- Initial buffer capacity -------------------------------------------
+  // --- Initial buffer capacity + "Show all containers" default -----------
   useEffect(() => {
     getStatus()
-      .then((status) => dispatch({ type: "SET_BUFFER_CAPACITY", capacity: status.bufferCapacity }))
+      .then((status) => {
+        dispatch({ type: "SET_BUFFER_CAPACITY", capacity: status.bufferCapacity });
+        dispatch({ type: "SET_SHOW_ALL_CONTAINERS_DEFAULT", value: status.dockerAllContainersDefault });
+      })
       .catch(() => {
         // Keep the architecture.md default; connection state UI already
         // surfaces auth/connectivity failures.
@@ -479,6 +683,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         socketRef.current?.send({ type: "clear" });
       },
       dismissToast: () => dispatch({ type: "DISMISS_TOAST" }),
+      toggleShowAllContainers: () => dispatch({ type: "TOGGLE_SHOW_ALL_CONTAINERS" }),
+      dismissDockerStatusCard: (status) => dispatch({ type: "DISMISS_DOCKER_STATUS_CARD", status }),
       startUpload: async (file: File) => {
         if (file.size > HARD_CAP_BYTES) {
           window.alert("This file is over the 500 MB limit and can't be loaded.");
@@ -589,4 +795,30 @@ export function useEvicted(): boolean {
 export function useOrderedSources(): SourceDescriptor[] {
   const { state } = useAppStore();
   return useMemo(() => state.sourceOrder.map((id) => state.sources[id]).filter(Boolean), [state.sourceOrder, state.sources]);
+}
+
+/** Tri-state read of `state.dockerAvailability` (see `AppState` and the
+ *  reducer's `withDockerAvailabilityFromSources`/`SETTLE_DOCKER_AVAILABILITY`
+ *  handling): "enabled"/"disabled" are inferred purely from the two signals
+ *  the protocol already sends — a `dockerStatus` message or a `kind:
+ *  "docker"` source — never a new API field (design review 002 ratified
+ *  inference over an explicit flag). "unknown" covers the brief window
+ *  before either signal (or the settle-guard timeout) has resolved it; the
+ *  Sidebar treats "unknown" the same as "enabled" (sectioned layout, with
+ *  ContainersSection's own loading copy) so it never flashes phase-1's flat
+ *  fallback before genuinely learning Docker is disabled (design review 002
+ *  Finding 2). */
+export function useDockerAvailability(): AppState["dockerAvailability"] {
+  const { state } = useAppStore();
+  return state.dockerAvailability;
+}
+
+export function useContainerSources(): SourceDescriptor[] {
+  const ordered = useOrderedSources();
+  return useMemo(() => ordered.filter((s) => s.kind === "docker"), [ordered]);
+}
+
+export function useFileSources(): SourceDescriptor[] {
+  const ordered = useOrderedSources();
+  return useMemo(() => ordered.filter((s) => s.kind === "file"), [ordered]);
 }

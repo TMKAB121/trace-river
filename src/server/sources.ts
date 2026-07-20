@@ -1,27 +1,64 @@
 /**
  * In-memory source registry — one SourceDescriptor per ingest source for
- * the life of the process. Phase 1 only ever creates `kind: "file"` sources
- * (uploads), but the shape and registry are kind-generic per architecture.md.
+ * the life of the process. Phase 1 only ever created `kind: "file"` sources
+ * (uploads); phase 2 adds `kind: "docker"` (docs/specs/002-phase-2-docker.md).
  */
 import type { SourceDescriptor, SourceKind, SourceState } from "../shared/types.js";
+
+export interface CreateSourceOptions {
+  /** Default true (matches phase 1's file-upload behavior: subscribed on
+   *  creation). Docker sources are created with `subscribed: false` —
+   *  "discovered-but-unsubscribed containers cost nothing" (spec 002). */
+  subscribed?: boolean;
+  state?: SourceState;
+  detail?: string | null;
+  docker?: SourceDescriptor["docker"];
+}
 
 export class SourceRegistry {
   private sources = new Map<string, SourceDescriptor>();
 
-  create(id: string, kind: SourceKind, label: string): SourceDescriptor {
+  create(id: string, kind: SourceKind, label: string, opts: CreateSourceOptions = {}): SourceDescriptor {
     const descriptor: SourceDescriptor = {
       id,
       kind,
       label,
-      subscribed: true,
+      subscribed: opts.subscribed ?? true,
       visible: true,
       entryCount: 0,
-      state: "live",
-      detail: null,
+      state: opts.state ?? "live",
+      detail: opts.detail ?? null,
       createdAt: Date.now(),
+      docker: opts.docker,
     };
     this.sources.set(id, descriptor);
     return descriptor;
+  }
+
+  /** Removes a source entirely — only ever used to settle a phantom entry;
+   *  phase 2 never actually calls this (renamed/removed docker sources
+   *  settle to `stopped` and stay visible, per spec 002 Decision 4). Kept
+   *  for completeness/tests. */
+  delete(id: string): void {
+    this.sources.delete(id);
+  }
+
+  /** Server-global docker subscription flip (spec 002 § Interaction specs —
+   *  "Docker subscription is global, not per-connection", Decision 5). */
+  setSubscribed(id: string, subscribed: boolean): SourceDescriptor | undefined {
+    const source = this.sources.get(id);
+    if (!source) return undefined;
+    source.subscribed = subscribed;
+    return source;
+  }
+
+  /** Merges freshly-discovered docker metadata onto an existing source
+   *  (image/compose labels rarely change, but keep it current). */
+  updateDockerMeta(id: string, docker: NonNullable<SourceDescriptor["docker"]>): SourceDescriptor | undefined {
+    const source = this.sources.get(id);
+    if (!source) return undefined;
+    source.docker = docker;
+    return source;
   }
 
   get(id: string): SourceDescriptor | undefined {

@@ -87,7 +87,31 @@ export interface SourceDescriptor {
 
   /** Epoch ms — sidebar sort order (oldest first, matching upload order). */
   createdAt: number;
+
+  /**
+   * Present only when kind === "docker" (docs/specs/002-phase-2-docker.md
+   * § API contract). Metadata for the sidebar tooltip and the project-filter
+   * default. `inCurrentProject` drives which rows the sidebar shows when
+   * "Show all containers" is off. The server includes every discovered
+   * container (post include/exclude filtering) regardless of this value;
+   * the project filter is a client-side render decision, not a
+   * discovery-time exclusion, because discovered-but-unsubscribed
+   * containers cost nothing.
+   */
+  docker?: {
+    image: string;
+    composeProject: string | null;
+    composeService: string | null;
+    inCurrentProject: boolean;
+  };
 }
+
+/**
+ * Docker daemon connectivity (docs/specs/002-phase-2-docker.md § API
+ * contract). Mirrored by the WS `dockerStatus` push and
+ * `GET /api/docker/status`.
+ */
+export type DockerStatus = "not_installed" | "not_running" | "permission_denied" | "connected";
 
 // ---------------------------------------------------------------------------
 // WebSocket protocol
@@ -98,7 +122,8 @@ export type ServerToClientMessage =
   | { type: "sources"; sources: SourceDescriptor[] }
   | { type: "sourceState"; id: string; state: SourceState; detail?: string | null }
   | { type: "dropped"; count: number }
-  | { type: "cleared" };
+  | { type: "cleared" }
+  | { type: "dockerStatus"; status: DockerStatus; detail: string | null };
 
 export type ClientToServerMessage =
   | { type: "subscribe"; sourceIds: string[] }

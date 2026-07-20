@@ -97,6 +97,18 @@ export class Broadcaster {
         for (const conn of this.clients)
             this.sendJson(conn.ws, { type: "cleared" });
     }
+    /** Sent once to a newly-connected client, third in the WS connection
+     *  sequence (docs/specs/002-phase-2-docker.md § API contract) — only when
+     *  Docker is enabled server-side. */
+    sendDockerStatus(conn, status, detail) {
+        this.sendJson(conn.ws, { type: "dockerStatus", status, detail });
+    }
+    /** Broadcast whenever daemon connectivity status changes, in either
+     *  direction (docs/specs/002-phase-2-docker.md § API contract). */
+    broadcastDockerStatus(status, detail) {
+        for (const conn of this.clients)
+            this.sendJson(conn.ws, { type: "dockerStatus", status, detail });
+    }
     clientCount() {
         return this.clients.size;
     }

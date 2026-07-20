@@ -1,7 +1,6 @@
 .source-row {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
   padding: var(--space-1) 0;
   opacity: 1;
   transition: opacity var(--motion-fast);
@@ -9,6 +8,12 @@
 
 .source-row--dimmed {
   opacity: 0.55;
+}
+
+.source-row__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .source-row__checkbox {
@@ -73,4 +78,22 @@
 
 .source-row__toggle[aria-checked="true"] .source-row__toggle-thumb {
   transform: translateX(calc(var(--toggle-width) - var(--toggle-thumb-size) - 4px));
+}
+
+/* Docker-only STOPPED/ERROR state label (spec 002 § Components & states —
+ * Container source row) — real text, not a color-only signal, indented
+ * beneath the label to align under it. */
+.source-row__state-label {
+  padding-left: var(--space-12);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-label);
+}
+
+.source-row__state-label--stopped {
+  color: var(--color-text-muted);
+}
+
+.source-row__state-label--error {
+  color: var(--color-level-error);
 }
