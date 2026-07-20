@@ -2,7 +2,7 @@
 
 **Area:** backend
 **Severity:** high
-**Status:** open
+**Status:** verified-fixed
 **Spec:** `docs/specs/002-phase-2-docker.md` acceptance criterion 8
 ("`docker restart <svc>`... the stream shows no duplicated lines across the
 restart boundary") and `docs/phases/phase-2-docker.md` § 2.4 ("re-attach
@@ -117,3 +117,55 @@ specifically (relying on `follow` for genuinely-new output only), or use
 Docker's `logs({ since: <lastDeliveredTimestamp> })` option keyed off the
 last entry actually emitted before the stream ended, so a reattach only
 ever requests output after that point. Not a QA call to make.
+
+## Re-verification (2026-07-20)
+
+**Result: fixed.** `src/ingest/docker.ts` now tracks `lastTimestampNanos` on
+each `ManagedContainer` (the newest Docker per-line timestamp actually read
+off that container's stream, updated by `recordTimestamp()` on every line)
+and `attach()` branches on it:
+
+```ts
+const logsOptions =
+  managed.lastTimestampNanos !== null
+    ? { since: sinceParam(managed.lastTimestampNanos + 1n) }
+    : { tail: 50 };
+```
+
+`lastTimestampNanos` is reset to `null` in `detach()` (explicit unsubscribe
+or permanent stop), so a genuinely fresh subscribe still gets the full
+`tail: 50` backfill (criterion 5); only a stream that ended on its own while
+still subscribed (restart) preserves it, so `discoverAll()`'s automatic
+reattach uses `since: <last seen timestamp + 1ns>` and never re-reads
+already-delivered history. This is exactly the "options worth considering"
+approach from this defect's own suggested-fix section.
+
+The committed regression test, `test/docker/lifecycle.test.ts` → "criterion
+8: docker restart transitions live -> stopped -> live automatically, with no
+duplicated lines across the boundary", is now **green**, and — unlike the
+pre-fix version, which this defect explicitly flagged as timing-dependently
+flaky — it now passes **deterministically** in isolation, run 4 times back to
+back with no failures:
+
+```
+✓ criterion 8: ... 14784ms
+✓ criterion 8: ... 14778ms
+✓ criterion 8: ... 14808ms
+```
+
+Also observed passing as part of the full `npm test` suite run (not just in
+isolation). This determinism is expected from the fix: the root cause was specifically
+that `tail: 50`'s overlap with pre-restart history was itself a function of
+how much new output had landed by reattach time (i.e. inherently racy);
+`since: <timestamp>` has no such window, so there's no longer a timing
+dependency to be flaky about.
+
+Also confirmed via the full suite (`npm test`): 79/79 pass. `typecheck` and
+`build` both pass cleanly with the fix in place.
+
+Throwaway containers used for the demux/lifecycle regression runs above were
+all created and destroyed by the tests' own `afterEach`/`afterAll` hooks
+(`tr-qa-`-prefixed, per `test/docker/helpers.ts`); confirmed zero `tr-qa-*`
+containers remained after each run (`docker ps -a`). The owner's
+`street_bites` containers were only ever observed (`docker ps`), never
+restarted, renamed, stopped, or removed.

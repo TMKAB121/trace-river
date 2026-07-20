@@ -25,7 +25,7 @@ Non-obvious invariants (full spec: `docs/log-schema.md`):
 
 ## ingest/
 
-One adapter per source type; each produces raw byte chunks tagged with a namespaced source id (`file:`, `docker:`, `local:`) and owns source-specific concerns only (parsing belongs to the pipeline). `upload.ts` streams the request body straight into the pipeline — the whole file is never in memory; 50 MB soft warning, 500 MB hard cap (413). `docker.ts` / `tail.ts` don't exist yet (phases 2/3); `docs/phases/phase-2-docker.md` § 2.3 documents the stdout/stderr demux gotcha before writing docker.ts.
+One adapter per source type; each produces raw byte chunks tagged with a namespaced source id (`file:`, `docker:`, `local:`) and owns source-specific concerns only (parsing belongs to the pipeline). `upload.ts` streams the request body straight into the pipeline — the whole file is never in memory; 50 MB soft warning, 500 MB hard cap (413). `docker.ts` (phase 2, shipped) is the `DockerManager`: socket resolution (`DOCKER_HOST` → platform default → Podman), 10 s recovery poll, compose-project filtering, **global server-side subscriptions** (unlike per-connection file sources), TTY vs non-TTY demux with a WARN floor on stderr, and events-driven lifecycle with `since`-based dedup on restart re-attach. It talks to the daemon only through `docker-client.ts` — a read-only wrapper exposing exactly `listContainers`/`inspect`/`logs`/`getEvents` (+ ping); no create/exec/remove call may exist anywhere (hard rule), and the `dockerode` import stays lazy/dynamic (an eager import once blew the memory-test RSS ceiling). `tail.ts` doesn't exist yet (phase 3).
 
 ## cli.ts / cli/
 

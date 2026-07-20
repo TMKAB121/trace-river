@@ -2,7 +2,7 @@
 
 **Area:** backend
 **Severity:** high
-**Status:** open
+**Status:** verified-fixed
 **Spec:** `docs/specs/002-phase-2-docker.md` acceptance criterion 5 ("Checking a
 container's checkbox... both the sidebar's entry count and the unified
 stream reflect that container's output **within one broadcast interval**")
@@ -121,3 +121,47 @@ behavior being tested. `test/docker/subscribe-global.test.ts` and sibling
 files were written using JSON-formatted throwaway container output (or a
 pre-accumulated backlog before subscribing) specifically to route around
 this defect rather than depend on it — see those files' comments for why.
+
+## Re-verification (2026-07-20)
+
+**Result: fixed.** `src/parsers/pipeline.ts`'s `handleAggregatedEntry()` now
+emits every live-mode entry immediately as it's aggregated (`this.emit(
+"entries", [this.buildLog(entry, provisional)])`), provisionally tagged with
+whatever parser has already earned an early lock (`checkEarlyLock() ??
+rawParser`), instead of buffering up to `LIVE_DETECTION_ENTRY_CAP` (20)
+entries before emitting anything. Read the diff (`git log -- src/parsers/
+pipeline.ts`) and confirm the withholding branch (`this.bufferedDetectionEntries.push(entry)`
+gating all emission) is gone for `mode === "live"`.
+
+Re-reproduced live end-to-end against a real, freshly-created throwaway
+container (`tr-qa-repro-defect1`, plain unstructured text, ~1 line/sec, no
+pre-existing backlog — same shape as the original repro) using a one-off
+script that boots the real built server (`dist/server/index.js`) and a real
+WS client, subscribes the moment the container is discovered, and measures
+the delay from `subscribe` to the first `"entries"` message for that source:
+
+```
+subscribe sent at 1784570220100
+entries received for source: 6
+first entry delay from subscribe (ms): 949
+```
+
+949 ms (dominated by the real `docker inspect`/`logs` attach round-trip, not
+by any artificial detection buffering) vs. the original defect's ~20,000 ms
+(zero entries until 20 lines had accumulated). 6 entries arrived steadily
+over the following 6 seconds (roughly 1/sec, matching the container's own
+emission rate) with no further gap — confirms entries are no longer withheld
+pending detection. Per this run's product-owner-ratified note, the
+provisional `raw` tag on these early entries (and the fact that they aren't
+retroactively re-tagged) is expected, in-scope behavior, not re-litigated
+here — only "entries appear within one broadcast interval" (criterion 5) was
+re-verified.
+
+Also re-ran the full automated suite (`npm test`): 79/79 pass, including all
+`test/docker/*.test.ts` files that were written to route around this defect
+— no regression from the fix.
+
+Throwaway container `tr-qa-repro-defect1` removed at the end of the
+reproduction (confirmed via `docker ps -a` — no `tr-qa-*` containers
+remain); the owner's `street_bites` containers were only observed
+(`docker ps`), never touched.

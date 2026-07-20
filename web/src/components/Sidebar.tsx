@@ -1,4 +1,4 @@
-import { useDockerEnabled, useOrderedSources } from "../store/store";
+import { useDockerAvailability, useOrderedSources } from "../store/store";
 import SourceRow from "./SourceRow";
 import DropArea from "./DropArea";
 import ContainersSection from "./ContainersSection";
@@ -6,7 +6,7 @@ import FilesSection from "./FilesSection";
 import "./Sidebar.css";
 
 export default function Sidebar() {
-  const dockerEnabled = useDockerEnabled();
+  const dockerAvailability = useDockerAvailability();
   const sources = useOrderedSources();
 
   return (
@@ -18,10 +18,14 @@ export default function Sidebar() {
       />
       <h2 className="sidebar__header">Log Sources</h2>
       <div className="sidebar__list-wrap">
-        {dockerEnabled ? (
+        {dockerAvailability !== "disabled" ? (
           // Spec 002 § Layout: sidebar splits into Containers/Files
-          // sub-sections once Docker is enabled server-side; the flat phase-1
-          // list below is reserved for `docker.enabled: false`.
+          // sub-sections whenever Docker isn't known to be disabled — this
+          // covers both "enabled" and the brief "unknown" window before that
+          // is settled (design review 002 Finding 2), so the loading state
+          // is the sectioned "Checking Docker…" treatment, never the flat
+          // phase-1 fallback below. That fallback is reserved for the
+          // genuinely-settled `docker.enabled: false` case.
           <div className="sidebar__sections">
             <ContainersSection />
             <FilesSection />

@@ -144,9 +144,21 @@ export class DockerManager {
     if (this.stopped) return;
 
     if (result.status === "connected") {
-      this.setStatus("connected", null);
       this.stopPoll();
-      await this.discoverAll();
+      // Discover (and broadcast the refreshed `sources` list) *before*
+      // announcing `dockerStatus: "connected"` — the client's recovery
+      // toast/announcement ("Docker connected — <n> container(s) found")
+      // computes its count from whatever `sources` snapshot it already has
+      // at the moment `dockerStatus` arrives, so `sources` must land first
+      // (docs/design-reviews/002-phase-2-docker.md Finding 1). `discoverAll`
+      // broadcasts `sources` itself as its last step, and — on a transient
+      // connectivity loss between the ping that just succeeded and the
+      // `listContainers` call — settles `status` to `not_running` and
+      // returns `false` on its own; in that case we must not then announce
+      // a phantom "connected" transition on top of it.
+      const discovered = await this.discoverAll();
+      if (this.stopped || !discovered) return;
+      this.setStatus("connected", null);
       this.watchEvents();
     } else {
       this.setStatus(result.status, result.detail);
@@ -178,7 +190,12 @@ export class DockerManager {
 
   // -- Discovery ----------------------------------------------------------
 
-  private async discoverAll(): Promise<void> {
+  /** Returns `false` when connectivity was lost between the caller's last
+   *  successful ping and `listContainers` here (in which case `status` has
+   *  already been settled to `not_running` and the poll restarted) — callers
+   *  that gate a `"connected"` status announcement on discovery having
+   *  actually succeeded (`attemptConnect`) must check this. */
+  private async discoverAll(): Promise<boolean> {
     let infos: ContainerInfo[];
     try {
       infos = await this.client.listContainers();
@@ -187,9 +204,9 @@ export class DockerManager {
       // call — treat as a connectivity drop and let the poll recover it.
       this.setStatus("not_running", null);
       this.startPoll();
-      return;
+      return false;
     }
-    if (this.stopped) return;
+    if (this.stopped) return false;
 
     const seenIds = new Set<string>();
 
@@ -249,6 +266,7 @@ export class DockerManager {
     }
 
     this.state.broadcaster.broadcastSources(this.state.sources.list());
+    return true;
   }
 
   private settleStopped(sourceId: string): void {

@@ -1,11 +1,11 @@
 # Pipeline state — 002-phase-2-docker
 
-Status: in-progress
-Current phase: 4 — QA fix loop
+Status: complete
+Current phase: 8 — Accepted by product owner (2026-07-20)
 Tier: 3 — Complex: net-new UI (Docker sources in sidebar, status/guidance cards, all-containers toggle) plus a new backend surface (Docker wrapper, subscribe protocol) plus an explicit security tradeoff (read-only Docker socket access) — three separate Tier-3 escalators.
 Lightened/skipped phases: none — full pipeline.
 QA fix-loop iteration: 1/2
-Design fix-loop iteration: 0/2
+Design fix-loop iteration: 1/2
 
 ## Ask
 
@@ -22,6 +22,15 @@ Implement Phase 2 (Docker log streams) as specified in docs/phases/phase-2-docke
 | 2 — Implementation (frontend) | frontend-developer | web/src/types.ts, web/src/store/store.tsx, web/src/components/{Sidebar,SourceRow}.tsx+.css, ContainersSection.tsx+.css, FilesSection.tsx, DockerStatusCard.tsx+.css | complete; web typecheck + vite build pass; 3 open Qs → owner ratified | 2026-07-19 |
 | 3 — QA | qa-engineer | docs/qa/test-plans/002-phase-2-docker.md, test/docker/* (19 tests), docs/qa/defects/002-phase-2-docker-{1,2,3}.md, docs/qa/evidence/002-phase-2-docker/ | FAIL — gates pass, 18/21 criteria OK, 3 backend defects (criteria 5, 7, 8); 3 open Qs → owner answered | 2026-07-19 |
 | 4 — Fix loop iter 1 (backend) | backend-developer | src/parsers/pipeline.ts, src/ingest/docker.ts, src/types/dockerode.d.ts | complete — all 3 defects fixed, 79/79 tests green incl. both regression tests; 1 open Q → owner accepted provisional emit | 2026-07-20 |
+| 4 — Fix loop iter 1 (QA re-verify) | qa-engineer | defect files 1–3 → verified-fixed; test plan updated | PASS — 21/21 criteria, 0 defects open, gates green (79/79 ×3 runs) | 2026-07-20 |
+| 5 — Design verification | ux-designer | docs/design-reviews/002-phase-2-docker.md | CHANGES REQUIRED — F1 major (backend: connected toast broadcast ordering shows 0 containers), F2 minor (frontend: flat-layout flash pre-dockerStatus) | 2026-07-20 |
+| 6 — Design fix iter 1 (backend) | backend-developer | src/ingest/docker.ts | complete — discovery/sources broadcast now precedes connected status; phantom-connected guarded; 79/79 green | 2026-07-20 |
+| 6 — Design fix iter 1 (frontend) | frontend-developer | web/src/store/store.tsx, web/src/components/Sidebar.tsx | complete — tri-state dockerAvailability (unknown/enabled/disabled) with 400ms settle guard; flat fallback only when settled disabled | 2026-07-20 |
+| 6 — Design fix iter 1 (QA regression) | qa-engineer | test/docker/recovery-ordering.test.ts (new), test plan regression section, evidence 04/05 | PASS — 81/81, both fixes confirmed, 0 defects | 2026-07-20 |
+| 6 — Design re-review | ux-designer | docs/design-reviews/002-phase-2-docker.md (re-review section + final verdict) | APPROVED — both findings resolved | 2026-07-20 |
+| 7 — Documentation | technical-writer | README.md, docs/project/overview.md, docs/project/features/002-phase-2-docker.md (new) | docs-current; 3 open Qs → owner answered | 2026-07-20 |
+| 7b — CLAUDE.md sync | orchestrator (owner-approved) | docs/CLAUDE.md, src/CLAUDE.md | done — phase-2 status + ingest section updated | 2026-07-20 |
+| 7c — Version bump | backend-developer | package.json, package-lock.json, src/server/index.ts, src/cli.ts | 0.0.1 → 0.2.0 across package, /api/status, and CLI --version (owner-approved) | 2026-07-20 |
 
 ## Open questions log
 
@@ -38,3 +47,6 @@ All Phase-2 answers ratified shipped behavior as-is; no dev re-invocation was re
 8. (qa-engineer, Phase 3) Do defects 1–3 block shipping? — **Owner: Fix all three now via the standard fix loop.**
 9. (qa-engineer, Phase 3) `tools/browser.js` doesn't exist; evidence captured via direct headless Chrome. — **Owner: Accepted; evidence stands as captured.**
 10. (backend-developer, Phase 4 fix loop) Defect-1 fix strategy: provisional emit (first ≤20 entries may stay `raw`) vs retroactive re-tag on format lock? — **Owner: Provisional emit accepted.**
+11. (technical-writer, Phase 7) `docs/CLAUDE.md` + `src/CLAUDE.md` stale after phase 2 (outside all lanes) — **Owner: orchestrator updates both directly.** Done.
+12. (technical-writer, Phase 7) Bump package version to 0.2.0 for the phase-2 release? — **Owner: Yes, bump.** Routed to backend-developer.
+13. (backend-developer, Phase 7c) `src/cli.ts` Commander `.version("0.0.1")` also stale — bump in same change? — **Owner: Yes, bump it too.**

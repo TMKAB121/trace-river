@@ -60,7 +60,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const desiredPort = options.port ?? DEFAULT_PORT;
   const strictPort = options.strictPort ?? false;
   const token = options.token ?? generateSessionToken();
-  const version = options.version ?? "0.0.1";
+  const version = options.version ?? "0.2.0";
   const webDist = options.webDist ?? DEFAULT_WEB_DIST;
 
   const config: ResolvedConfig =

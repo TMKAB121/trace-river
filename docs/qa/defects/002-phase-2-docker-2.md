@@ -2,7 +2,7 @@
 
 **Area:** backend
 **Severity:** high
-**Status:** open
+**Status:** verified-fixed
 **Spec:** `docs/specs/002-phase-2-docker.md` acceptance criterion 7 ("TTY
 output renders as plain text without corruption") and `docs/phases/
 phase-2-docker.md` § 2.3 ("`timestamps: true` prepends Docker's own
@@ -130,3 +130,30 @@ Strip a trailing `\r` from `line` inside `DockerLineFeeder.push()`/`feedLine()`
 *before* running `DOCKER_TIMESTAMP_RE` against it (rather than relying on
 `SourcePipeline.feedLine()`'s later, too-late `\r` strip) — not a QA call to
 implement.
+
+## Re-verification (2026-07-20)
+
+**Result: fixed.** `src/ingest/docker.ts`'s `DockerLineFeeder.feedLine()` now
+strips a trailing `\r` from `line` before running `DOCKER_TIMESTAMP_RE`
+against it (`const withoutCr = line.endsWith("\r") ? line.slice(0, -1) :
+line;` followed by `DOCKER_TIMESTAMP_RE.exec(withoutCr)`, with both the
+timestamp-match and fallback branches now operating on `withoutCr`) — exactly
+the suggested fix, applied at the point where it actually matters (before the
+regex, not `SourcePipeline`'s later, too-late strip).
+
+The committed regression test, `test/docker/demux.test.ts` → "a TTY
+container's plain-text output renders unmodified (never demuxed)", is now
+**green**:
+
+```
+✓ test/docker/demux.test.ts (3 tests) 8239ms
+  ✓ a non-TTY container's demuxed entries contain no binary frame-header garbage 1745ms
+  ✓ a TTY container's plain-text output renders unmodified (never demuxed) 1661ms
+  ✓ stderr lines without their own level are floored to WARN 1653ms
+```
+
+Ran in isolation (`node_modules/.bin/vitest run test/docker/demux.test.ts`)
+against a real Docker daemon and real throwaway TTY/non-TTY containers — pass
+was deterministic, not a fluke of full-suite ordering. Also confirmed via the
+full suite (`npm test`): 79/79 pass. `typecheck` and `build` both pass
+cleanly with the fix in place.

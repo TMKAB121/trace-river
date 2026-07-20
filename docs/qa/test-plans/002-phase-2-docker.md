@@ -31,6 +31,148 @@ Full suite after this run's additions: 21 test files, 79 tests (the
 phase-1 suite's 14 files / 60 tests, unchanged and still passing, plus 7 new
 files / 19 tests under `test/docker/`).
 
+## Re-verification pass (2026-07-20)
+
+All three defects filed below were fixed by the backend developer
+(`src/parsers/pipeline.ts`, `src/ingest/docker.ts`, `src/types/dockerode.d.ts`)
+and re-verified against a real Docker daemon on this same host. Full detail
+in each defect file's own "Re-verification" section; summary:
+
+| Gate | Command | Result |
+|---|---|---|
+| typecheck | `npm run typecheck` | **PASS** — no errors |
+| build | `npm run build` | **PASS** — `dist/` and `dist/web/` produced cleanly |
+| test | `npm test` (`vitest run`) | **79/79 passed** — all three previously-red/withholding behaviors now pass, including the two committed regression tests (`test/docker/demux.test.ts`, `test/docker/lifecycle.test.ts`) that were intentionally left failing pre-fix |
+
+| # | Defect | Status | Re-verification method |
+|---|---|---|---|
+| [1](../defects/002-phase-2-docker-1.md) | Live entries withheld up to ~20 lines pending detection | **verified-fixed** | Live reproduction: fresh throwaway plain-text container, subscribe-to-first-entry delay 949 ms (was ~20,000 ms) |
+| [2](../defects/002-phase-2-docker-2.md) | TTY `\r\n` timestamp-prefix leak into `message` | **verified-fixed** | `test/docker/demux.test.ts` green, deterministic across 1 combined + isolated reruns |
+| [3](../defects/002-phase-2-docker-3.md) | `docker restart` re-delivers pre-restart lines | **verified-fixed** | `test/docker/lifecycle.test.ts` criterion 8 green, deterministic across 4 isolated reruns (was documented as timing-dependently flaky pre-fix) |
+
+No new defects found during re-verification. Test environment discipline
+unchanged from the original pass: only `tr-qa-*`-prefixed throwaway
+containers were created/restarted/removed (confirmed zero remain via
+`docker ps -a` at the end of this pass); the product owner's `street_bites`
+containers were observed only (`docker ps`), never touched.
+
+## Regression run — design review 002 fixes (2026-07-20)
+
+Design review 002 (`docs/design-reviews/002-phase-2-docker.md`) returned
+**CHANGES REQUIRED** after the above re-verification pass: Finding 1 (major,
+backend) — the recovery `dockerStatus:"connected"` broadcast raced ahead of
+the corrected `sources` broadcast, so the "Docker connected — `<n>`
+container(s) found" toast/announcement could show a stale (typically 0)
+count; Finding 2 (minor, frontend) — `useDockerEnabled()`'s two-signal
+inference left a window (zero-container project, no file sources yet) where
+the sidebar fell back to phase-1's flat layout instead of the documented
+sectioned "Checking Docker…" loading state. Both were fixed
+(`src/ingest/docker.ts`; `web/src/store/store.tsx` + `web/src/components/
+Sidebar.tsx` — tri-state `dockerAvailability` with a 400 ms post-connect
+settle guard). This section re-verifies those two fixes and checks for
+regressions; it does not re-litigate criteria already covered above.
+
+### Gates
+
+| Gate | Command | Result |
+|---|---|---|
+| typecheck | `npm run typecheck` | **PASS** — no errors |
+| build | `npm run build` | **PASS** — `dist/` and `dist/web/` produced cleanly (frontend bundle hash changed, reflecting the `store.tsx`/`Sidebar.tsx` fix; no other diff) |
+| test | `npm test` (`vitest run`) | **81/81 passed** — the pre-existing 79 (unchanged, all still green) plus 2 new tests added this run in `test/docker/recovery-ordering.test.ts` (see below). The run brief's own expectation was 79; the 2 extra are new regression coverage authored in this pass, not a discrepancy. |
+
+### Finding 1 (backend, broadcast ordering) — spot-check
+
+The full down→up recovery transition against a *real* daemon still can't be
+staged live on this host (stopping the one real, working local Docker daemon
+would also take `street_bites` down — explicitly off-limits, and the same
+constraint the original QA pass and the design review both already
+documented). Source review confirms the fix matches the design review's
+recommendation exactly: `attemptConnect()` now calls `discoverAll()` (which
+broadcasts `sources` as its last step) and only calls `setStatus("connected",
+...)` (which broadcasts `dockerStatus`) after `discoverAll()` resolves
+`true`; if `discoverAll()`'s own `listContainers()` call fails (the
+ping-ok/listContainers-fail race the design review specifically called out),
+it returns `false` and `attemptConnect()` returns early without announcing a
+phantom "connected" — `src/ingest/docker.ts:141-167`, `:193-269`.
+
+Beyond code review, added `test/docker/recovery-ordering.test.ts` — a pure
+unit test against `DockerManager` with a stubbed `DockerClient` and a spied
+`Broadcaster` (no real Docker daemon, no `tr-qa-*`/`street_bites` container
+touched at all), exercising the exact private `attemptConnect()`/
+`discoverAll()` ordering logic deterministically:
+
+- Test 1 simulates "Docker just came back up with 2 containers" and asserts
+  `broadcastSources` is called (with those 2 containers already present)
+  strictly before `broadcastDockerStatus("connected")` — i.e., the count a
+  client would read at `dockerStatus`-arrival time is the real post-recovery
+  count (2), not a stale pre-recovery one.
+- Test 2 simulates the ping-ok/listContainers-fail race and asserts
+  `dockerStatus` is only ever broadcast as `"not_running"` — `"connected"` is
+  never announced on top of it.
+
+Both tests were confirmed to **fail** against the pre-fix `src/ingest/
+docker.ts` (verified by temporarily `git stash`-ing just that file and
+re-running the new test file: test 1 failed with "expected 1 to be less than
+0" — `sources` arrived after `dockerStatus`; test 2 failed with `dockerStatus`
+calls `["connected", "not_running"]` instead of `["not_running"]`, confirming
+the phantom-"connected" the design review flagged) — so this is a genuine
+regression guard, not a tautological pass. Both pass against the fixed code.
+
+### Finding 2 (frontend, tri-state `dockerAvailability`) — browser evidence
+
+`tools/browser.js` still does not exist in this repository (confirmed again
+this run — same gap the original pass documented); evidence captured the
+same way as before: direct headless Chrome (`--headless=new`), against the
+real built `dist/web` bundle served by the real built server
+(`node dist/cli.js start`), on a spare port, with a throwaway
+`traceriver.json` (`docker.enabled: false`) in a scratch `cwd` — no
+`tr-qa-*`/`street_bites` container involved (this scenario doesn't discover
+any container at all). Chrome's `--virtual-time-budget=<ms>` flag
+deterministically fast-forwards the page's own timers (including the new
+400 ms settle-guard `setTimeout`) before dumping DOM/taking the screenshot,
+letting both the transient and settled states be captured reproducibly:
+
+- `04-docker-disabled-loading-transient.png` / `.dom.html`
+  (`--virtual-time-budget=100`, i.e. before the WS has even had time to
+  connect) — confirms the sidebar renders the **sectioned** layout
+  (`sidebar__sections` / `containers-heading` / `files-heading`) with the
+  Containers sub-section showing the exact spec'd loading copy
+  `"Checking Docker…"`, instead of phase-1's flat fallback — this is
+  Finding 2's fix (`dockerAvailability !== "disabled"` renders sectioned for
+  both "unknown" and "enabled").
+- `05-docker-disabled-settled-regression-check.png` / `.dom.html`
+  (`--virtual-time-budget=5000`, well past the 400 ms settle guard) —
+  confirms the sidebar still settles to the exact phase-1 flat
+  `sidebar__empty` / `"(no sources yet)"` markup once `dockerAvailability`
+  resolves to `"disabled"`. Diffed byte-for-byte against the original
+  `03-docker-disabled-flat-sidebar.dom.html`: identical except the JS bundle
+  filename hash (expected, from the rebuild) — **no regression** in the
+  final rendered state, only a newly-added, correctly-bridged transient
+  window in front of it.
+
+`01-current-project-default`/`02-show-all-containers-default` (the
+≥3-containers-already-known scenarios) were not re-captured: per the design
+review's own analysis, Finding 2 only manifests in the zero-signal window
+before either a `dockerStatus` message or a docker source has ever been
+seen — both of those evidence captures already had ≥3 docker sources present
+from the very first `sources` message, so `dockerAvailability` resolves to
+`"enabled"` immediately in the reducer (`SET_SOURCES`/`UPSERT_SOURCE` →
+`withDockerAvailabilityFromSources`) with no observable rendering difference
+from the prior `useDockerEnabled()` boolean. Re-deriving those two scenarios
+would require standing up a fresh throwaway compose project again for no
+incremental evidence value; the automated Docker integration suite
+(`discovery.test.ts`, `subscribe-global.test.ts`, etc., all still green
+against real containers including `street_bites`, observed-only) continues to
+cover that populated-state behavior functionally.
+
+No new defects found in this regression pass. Environment discipline: no
+`tr-qa-*` container was created or touched for either spot-check (the
+Finding 1 test is a pure mock/unit test; the Finding 2 evidence capture
+uses `docker.enabled: false`, which discovers nothing); `street_bites`
+containers confirmed still `Up`, untouched, via `docker ps` before and after
+this pass; the one throwaway server process started for evidence capture
+(port 50496) was killed at the end of the pass.
+
 ## Test environment
 
 - A real Docker daemon (Docker Desktop for Mac) is running on the QA host,
@@ -87,13 +229,15 @@ could bite a future test author the same way.
 Three real, independently-reproduced backend defects were found while
 building out this suite — none were "fixed" here (QA lane doesn't touch
 `src/`); see each file for full root-cause analysis, reproduction, and
-impact:
+impact. **All three were subsequently fixed by the backend developer and
+re-verified fixed on 2026-07-20** (see § Re-verification pass above and each
+file's own "Re-verification" section):
 
-| # | Area | Severity | Summary |
-|---|---|---|---|
-| [002-phase-2-docker-1](../defects/002-phase-2-docker-1.md) | backend | high | A subscribed container whose lines don't confidently match monolog/CLF/JSON gets **zero** entries delivered for up to ~20 real-time log lines (the shared live-detection pipeline withholds everything until it commits), directly contradicting acceptance criterion 5's "within one broadcast interval." Confirmed via a plain-text vs. JSON-formatted control container. |
-| [002-phase-2-docker-2](../defects/002-phase-2-docker-2.md) | backend | high | Every entry from a **TTY-enabled** container has the raw Docker RFC3339Nano timestamp prefix leaking into its visible `message` (never stripped), and `rawTimestamp` stays `null` while `timestamp` degrades to a coarse, batching-dependent arrival time — because the timestamp-strip regex never matches TTY output's `\r\n`-terminated lines. Non-TTY is unaffected (plain `\n`). Directly violates criterion 7's "renders as plain text without corruption." |
-| [002-phase-2-docker-3](../defects/002-phase-2-docker-3.md) | backend | high | `docker restart` on a subscribed container re-delivers already-seen lines: reattach always uses `tail: 50` regardless of overlap, and Docker's default log driver doesn't truncate on restart, so a reattach shortly after a restart re-reads pre-restart history. Directly violates criterion 8's "no duplicated lines across the restart boundary." Confirmed both via raw `docker logs` and end-to-end through the pipeline; the automated regression test's exact duplicate count is timing-dependent (documented in the defect). |
+| # | Area | Severity | Summary | Status |
+|---|---|---|---|---|
+| [002-phase-2-docker-1](../defects/002-phase-2-docker-1.md) | backend | high | A subscribed container whose lines don't confidently match monolog/CLF/JSON gets **zero** entries delivered for up to ~20 real-time log lines (the shared live-detection pipeline withholds everything until it commits), directly contradicting acceptance criterion 5's "within one broadcast interval." Confirmed via a plain-text vs. JSON-formatted control container. | **verified-fixed** |
+| [002-phase-2-docker-2](../defects/002-phase-2-docker-2.md) | backend | high | Every entry from a **TTY-enabled** container has the raw Docker RFC3339Nano timestamp prefix leaking into its visible `message` (never stripped), and `rawTimestamp` stays `null` while `timestamp` degrades to a coarse, batching-dependent arrival time — because the timestamp-strip regex never matches TTY output's `\r\n`-terminated lines. Non-TTY is unaffected (plain `\n`). Directly violates criterion 7's "renders as plain text without corruption." | **verified-fixed** |
+| [002-phase-2-docker-3](../defects/002-phase-2-docker-3.md) | backend | high | `docker restart` on a subscribed container re-delivers already-seen lines: reattach always uses `tail: 50` regardless of overlap, and Docker's default log driver doesn't truncate on restart, so a reattach shortly after a restart re-reads pre-restart history. Directly violates criterion 8's "no duplicated lines across the restart boundary." Confirmed both via raw `docker logs` and end-to-end through the pipeline; the automated regression test's exact duplicate count is timing-dependent (documented in the defect). | **verified-fixed** |
 
 ## Rendered evidence
 
@@ -141,10 +285,10 @@ design tokens, and functionally by the automated lifecycle tests above).
 | 2 | "Show all containers" reveals everything, no extra request | `test/docker/discovery.test.ts` (server always sends `inCurrentProject`-tagged out-of-project sources regardless of toggle) + evidence `02-show-all-containers-default.png` (11 rows rendered from one `GET`/WS connect, no additional network call needed to reveal them) — **PASS** |
 | 3 | `docker.include`/`exclude` applied server-side, QA/backend-owned | `test/docker/discovery.test.ts` (2 tests: include-only and exclude-glob) — **PASS** |
 | 4 | Newly discovered container defaults: unchecked, count 0, no entries until subscribed | `test/docker/discovery.test.ts` — **PASS** |
-| 5 | Checking a container: `subscribe` sent, attaches with `tail:50`, sidebar + stream reflect output "within one broadcast interval", second tab sees the same | `test/docker/subscribe-global.test.ts` (both tabs receive entries from a single subscribe call) — **PASS for the mechanism**, but see [defect 1](../defects/002-phase-2-docker-1.md): the "within one broadcast interval" wording is **violated** for containers whose output isn't monolog/CLF/JSON-shaped (common case) — up to ~20s delay. Verdict for this row: **FAIL** (defect 1) |
+| 5 | Checking a container: `subscribe` sent, attaches with `tail:50`, sidebar + stream reflect output "within one broadcast interval", second tab sees the same | `test/docker/subscribe-global.test.ts` (both tabs receive entries from a single subscribe call) — **PASS for the mechanism**. [Defect 1](../defects/002-phase-2-docker-1.md) **re-verified fixed 2026-07-20**: `SourcePipeline` no longer withholds live entries pending detection; re-reproduced live against a fresh plain-text throwaway container — first entry arrived 949 ms after subscribe (vs. the original ~20,000 ms), with steady delivery thereafter. Per the product owner's ratified note, the first ≤20 entries of a hard-to-classify source may legitimately stay provisionally tagged `raw` — that is in scope and not re-litigated. Verdict for this row: **PASS** |
 | 6 | Unchecking stops the daemon-side stream; count frozen in every tab | `test/docker/subscribe-global.test.ts` (entryCount verified frozen across repeated `GET /api/sources` polls after unsubscribe, not just "briefly slowed") — **PASS** |
-| 7 | TTY vs. non-TTY demux correctness; stderr WARN floor | `test/docker/demux.test.ts` — non-TTY demux clean (**PASS**), stderr WARN floor correct (**PASS**), **TTY plain-text corrupted — FAIL** ([defect 2](../defects/002-phase-2-docker-2.md)) |
-| 8 | Restart: live→stopped→live automatic, no duplicated lines, stream/connection count back to baseline | `test/docker/lifecycle.test.ts` — state transitions and re-attach-without-user-action **PASS**; "no duplicated lines" **FAILS** reliably in isolation ([defect 3](../defects/002-phase-2-docker-3.md)) |
+| 7 | TTY vs. non-TTY demux correctness; stderr WARN floor | `test/docker/demux.test.ts` — non-TTY demux clean (**PASS**), stderr WARN floor correct (**PASS**). [Defect 2](../defects/002-phase-2-docker-2.md) **re-verified fixed 2026-07-20**: `DockerLineFeeder.feedLine()` now strips a trailing `\r` before the timestamp regex; the previously-red "TTY plain-text renders unmodified" test is now green, confirmed deterministic across repeated isolated runs. Verdict for this row: **PASS** |
+| 8 | Restart: live→stopped→live automatic, no duplicated lines, stream/connection count back to baseline | `test/docker/lifecycle.test.ts` — state transitions and re-attach-without-user-action **PASS**. [Defect 3](../defects/002-phase-2-docker-3.md) **re-verified fixed 2026-07-20**: reattach now uses `since: <last seen Docker timestamp + 1ns>` instead of `tail: 50`, eliminating the pre/post-restart overlap; the "no duplicated lines" assertion now passes deterministically (4 consecutive isolated runs, no failures — notably, this test was *by design* timing-dependently flaky pre-fix, so its newfound determinism is itself corroborating evidence the root cause is gone, not just "usually gone"). Verdict for this row: **PASS** |
 | 9 | Stop-without-restart: row stays visible, `STOPPED`, checkbox stays checked, history intact | `test/docker/lifecycle.test.ts` — **PASS** |
 | 10 | Docker not detected: card + dismiss, files/other sources keep working, no crash | Not independently producible end-to-end on this host (see § Known limitations below) — verified by **static code review** of `src/ingest/docker-client.ts`'s `classifyFailure()` and `web/src/components/DockerStatusCard.tsx` against the spec's copy table (exact heading/body text match confirmed by direct comparison); `docker.enabled:false`'s "rest of the console keeps working" equivalent **is** confirmed live via evidence `03-docker-disabled-flat-sidebar.png` (file upload area fully rendered/functional) |
 | 11 | Docker not running: card + auto-recovery within ~10s poll | Same limitation as #10 — static code review of `DockerManager.attemptConnect()`/`startPoll()` (10s `setInterval`, `unref()`'d) confirms the poll exists and reconnects/broadcasts on recovery; not exercised live (would require stopping the one real, working daemon this host depends on) |
@@ -164,8 +308,8 @@ design tokens, and functionally by the automated lifecycle tests above).
 | Exit criterion | Status |
 |---|---|
 | ≥3-container compose project shows exactly that project's containers; all-containers toggle reveals the rest | **PASS** — criteria 1–2 |
-| Subscribed containers stream live with correct TTY/non-TTY handling | **PARTIAL FAIL** — non-TTY demux and stderr floor correct; TTY output corrupted ([defect 2](../defects/002-phase-2-docker-2.md)) |
-| `docker restart` resumes automatically, no duplicated lines, no zombie streams | **PARTIAL FAIL** — auto-resume works; duplicated lines confirmed ([defect 3](../defects/002-phase-2-docker-3.md)); "daemon connection count stable" not independently instrumented beyond functional re-attach behavior |
+| Subscribed containers stream live with correct TTY/non-TTY handling | **PASS** (re-verified 2026-07-20) — non-TTY demux and stderr floor correct; TTY output corruption fixed ([defect 2](../defects/002-phase-2-docker-2.md), verified-fixed) |
+| `docker restart` resumes automatically, no duplicated lines, no zombie streams | **PASS** (re-verified 2026-07-20) — auto-resume works; duplicated-lines defect fixed ([defect 3](../defects/002-phase-2-docker-3.md), verified-fixed, now deterministic); "daemon connection count stable" not independently instrumented beyond functional re-attach behavior |
 | not installed/not running/permission denied each produce specific guidance, never crash | Not independently exercised end-to-end (see § Known limitations) — verified by code review only |
 | ~5k lines/sec doesn't freeze UI, memory bounded | **PASS** — criterion 14 |
 | Works against Docker Desktop (macOS + Windows) and Linux socket | macOS **PASS** (this whole run); Windows/Linux — code review only |

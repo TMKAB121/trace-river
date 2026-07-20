@@ -17,7 +17,7 @@ function parseIntArg(value) {
     return parsed;
 }
 const program = new Command();
-program.name("traceriver").description("Local log console").version("0.0.1");
+program.name("traceriver").description("Local log console").version("0.2.0");
 const startCommand = program
     .command("start")
     .description("Start the TraceRiver console")

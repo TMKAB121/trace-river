@@ -32,6 +32,20 @@ const TOAST_AUTO_DISMISS_MS = 2000;
 
 const DOCKER_FAILURE_STATUSES: DockerStatus[] = ["not_installed", "not_running", "permission_denied"];
 
+/** Grace window (ms), started once the WS reaches "connected", to wait for
+ *  either Docker-enabled signal (a `dockerStatus` message or a `kind:
+ *  "docker"` source) before concluding Docker is disabled server-side. The
+ *  server always sends the source list immediately on connect and, when
+ *  `docker.enabled`, the `dockerStatus` message right behind it in the same
+ *  handler (see `src/server/ws.ts` `onConnection`) — both land within one
+ *  network round trip of each other, so this only needs to be long enough to
+ *  absorb that jitter, not to wait out anything user-perceptible. Design
+ *  review 002 Finding 2: without this, a fresh connection with zero matching
+ *  containers and no file sources had no signal to distinguish "still
+ *  finding out" from "disabled," so the sidebar rendered phase‑1's flat
+ *  fallback instead of the spec'd sectioned "Checking Docker…" state. */
+const DOCKER_SETTLE_GUARD_MS = 400;
+
 function dockerStatusAnnouncement(status: DockerStatus): string {
   switch (status) {
     case "not_installed":
@@ -82,11 +96,20 @@ export interface AppState {
   announcement: string;
   uploads: Record<string, UploadProgress>;
   /** `null` until the first `dockerStatus` message ever arrives (or a
-   *  docker-kind source is seen in `sources`) — see `useDockerEnabled`.
+   *  docker-kind source is seen in `sources`) — see `useDockerAvailability`.
    *  Absence of both signals for the life of the connection means
    *  `docker.enabled: false` server-side (spec 002 § Layout). */
   dockerStatus: DockerStatus | null;
   dockerStatusDetail: string | null;
+  /** Tri-state read of whether Docker is enabled server-side, inferred
+   *  purely from the two signals the protocol already sends (no new API
+   *  field — design review 002 explicitly ratified inference over an
+   *  explicit flag): "unknown" until either a `dockerStatus` message or a
+   *  `kind: "docker"` source has been seen, or the post-connect settle guard
+   *  gives up waiting for both (see `DOCKER_SETTLE_GUARD_MS`); "enabled"/
+   *  "disabled" are terminal for the life of the page (`docker.enabled`
+   *  can't change at runtime) — see `useDockerAvailability`. */
+  dockerAvailability: "unknown" | "enabled" | "disabled";
   /** Status-card dismissals are per-status-value and session-only, never
    *  sent to the server (spec 002 § Components & states — Docker status card). */
   dismissedDockerStatuses: Set<DockerStatus>;
@@ -115,6 +138,7 @@ const initialState: AppState = {
   uploads: {},
   dockerStatus: null,
   dockerStatusDetail: null,
+  dockerAvailability: "unknown",
   dismissedDockerStatuses: new Set(),
   showAllContainers: false,
   showAllContainersTouched: false,
@@ -147,12 +171,25 @@ type Action =
   | { type: "SET_DOCKER_STATUS"; status: DockerStatus; detail: string | null }
   | { type: "SET_SHOW_ALL_CONTAINERS_DEFAULT"; value: boolean }
   | { type: "TOGGLE_SHOW_ALL_CONTAINERS" }
-  | { type: "DISMISS_DOCKER_STATUS_CARD"; status: DockerStatus };
+  | { type: "DISMISS_DOCKER_STATUS_CARD"; status: DockerStatus }
+  | { type: "SETTLE_DOCKER_AVAILABILITY"; value: "enabled" | "disabled" };
 
 function sortedSourceOrder(sources: Record<string, SourceDescriptor>): string[] {
   return Object.values(sources)
     .sort((a, b) => a.createdAt - b.createdAt)
     .map((s) => s.id);
+}
+
+/** `dockerAvailability` only ever moves out of "unknown" once, in whichever
+ *  direction is learned first — `docker.enabled` can't flip at runtime, so
+ *  neither a later `dockerStatus` message nor the settle-guard timeout
+ *  should ever override an already-settled value (see `useDockerAvailability`). */
+function withDockerAvailabilityFromSources(
+  current: AppState["dockerAvailability"],
+  sources: Record<string, SourceDescriptor>,
+): AppState["dockerAvailability"] {
+  if (current !== "unknown") return current;
+  return Object.values(sources).some((s) => s.kind === "docker") ? "enabled" : current;
 }
 
 /** Merge new entries, deduping against anything already stored by id (a
@@ -209,7 +246,12 @@ function reducer(state: AppState, action: Action): AppState {
           entryCount: incoming.subscribed ? incoming.entryCount : prior.entryCount,
         };
       }
-      return { ...state, sources, sourceOrder: sortedSourceOrder(sources) };
+      return {
+        ...state,
+        sources,
+        sourceOrder: sortedSourceOrder(sources),
+        dockerAvailability: withDockerAvailabilityFromSources(state.dockerAvailability, sources),
+      };
     }
 
     case "UPSERT_SOURCE": {
@@ -222,7 +264,12 @@ function reducer(state: AppState, action: Action): AppState {
           }
         : action.source;
       const sources = { ...state.sources, [action.source.id]: merged };
-      return { ...state, sources, sourceOrder: sortedSourceOrder(sources) };
+      return {
+        ...state,
+        sources,
+        sourceOrder: sortedSourceOrder(sources),
+        dockerAvailability: withDockerAvailabilityFromSources(state.dockerAvailability, sources),
+      };
     }
 
     case "SOURCE_STATE": {
@@ -340,7 +387,16 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case "SET_DOCKER_STATUS":
-      return { ...state, dockerStatus: action.status, dockerStatusDetail: action.detail };
+      return {
+        ...state,
+        dockerStatus: action.status,
+        dockerStatusDetail: action.detail,
+        dockerAvailability: "enabled",
+      };
+
+    case "SETTLE_DOCKER_AVAILABILITY":
+      if (state.dockerAvailability !== "unknown") return state;
+      return { ...state, dockerAvailability: action.value };
 
     case "SET_SHOW_ALL_CONTAINERS_DEFAULT":
       if (state.showAllContainersTouched) return state;
@@ -414,6 +470,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // (spec 002 § Accessibility — announce transitions, not steady states).
   const sourcesRef = useRef<Record<string, SourceDescriptor>>({});
   const dockerStatusRef = useRef<DockerStatus | null>(null);
+  // Mirrors state.dockerAvailability — read (and cleared) from the settle-
+  // guard timeout below, whose closure is fixed at mount (design review 002
+  // Finding 2 / see DOCKER_SETTLE_GUARD_MS).
+  const dockerAvailabilityRef = useRef<AppState["dockerAvailability"]>("unknown");
+  const dockerSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     lastIdRef.current = state.entries.length > 0 ? state.entries[state.entries.length - 1].id : -Infinity;
@@ -422,6 +483,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     sourcesRef.current = state.sources;
   }, [state.sources]);
+
+  useEffect(() => {
+    dockerAvailabilityRef.current = state.dockerAvailability;
+    // Once settled (in either direction), the guard timer has nothing left
+    // to do — clear it so it can't fire a no-op after unmount races.
+    if (state.dockerAvailability !== "unknown" && dockerSettleTimerRef.current) {
+      clearTimeout(dockerSettleTimerRef.current);
+      dockerSettleTimerRef.current = null;
+    }
+  }, [state.dockerAvailability]);
 
   // --- WS connection lifecycle -------------------------------------------
   useEffect(() => {
@@ -454,6 +525,23 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     const socket = new TraceRiverSocket({
       onStateChange: (connState: ConnectionState) => {
         dispatch({ type: "SET_CONNECTION", state: connState });
+        // Design review 002 Finding 2: once the WS has actually connected,
+        // the server sends `sources` (always) and, if `docker.enabled`,
+        // `dockerStatus` right behind it — both arrive within one round
+        // trip of each other. If dockerAvailability is still "unknown"
+        // DOCKER_SETTLE_GUARD_MS after connecting, no dockerStatus is
+        // coming and no docker source exists, so `docker.enabled: false`
+        // is the only remaining explanation — settle to "disabled" so the
+        // sidebar falls back to the flat phase-1 layout instead of getting
+        // stuck showing "Checking Docker…" forever (including against a
+        // stale phase-1 build that never sends `dockerStatus` at all).
+        if (connState === "connected" && dockerAvailabilityRef.current === "unknown") {
+          if (dockerSettleTimerRef.current) clearTimeout(dockerSettleTimerRef.current);
+          dockerSettleTimerRef.current = setTimeout(() => {
+            dockerSettleTimerRef.current = null;
+            dispatch({ type: "SETTLE_DOCKER_AVAILABILITY", value: "disabled" });
+          }, DOCKER_SETTLE_GUARD_MS);
+        }
       },
       onMessage: (msg: ServerMessage) => {
         switch (msg.type) {
@@ -519,7 +607,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     });
     socketRef.current = socket;
     socket.start();
-    return () => socket.close();
+    return () => {
+      socket.close();
+      if (dockerSettleTimerRef.current) {
+        clearTimeout(dockerSettleTimerRef.current);
+        dockerSettleTimerRef.current = null;
+      }
+    };
   }, []);
 
   // --- Initial buffer capacity + "Show all containers" default -----------
@@ -703,18 +797,20 @@ export function useOrderedSources(): SourceDescriptor[] {
   return useMemo(() => state.sourceOrder.map((id) => state.sources[id]).filter(Boolean), [state.sourceOrder, state.sources]);
 }
 
-/** True once Docker is known to be enabled server-side: either a
- *  `dockerStatus` message has ever arrived, or a `kind: "docker"` source has
- *  ever been seen. Both are absent for the life of the connection iff
- *  `docker.enabled: false` (spec 002 § Layout) — there is no explicit
- *  "disabled" signal, so this is inferred from the two signals the protocol
- *  does send, rather than a timeout. See frontend handoff for this feature. */
-export function useDockerEnabled(): boolean {
+/** Tri-state read of `state.dockerAvailability` (see `AppState` and the
+ *  reducer's `withDockerAvailabilityFromSources`/`SETTLE_DOCKER_AVAILABILITY`
+ *  handling): "enabled"/"disabled" are inferred purely from the two signals
+ *  the protocol already sends — a `dockerStatus` message or a `kind:
+ *  "docker"` source — never a new API field (design review 002 ratified
+ *  inference over an explicit flag). "unknown" covers the brief window
+ *  before either signal (or the settle-guard timeout) has resolved it; the
+ *  Sidebar treats "unknown" the same as "enabled" (sectioned layout, with
+ *  ContainersSection's own loading copy) so it never flashes phase-1's flat
+ *  fallback before genuinely learning Docker is disabled (design review 002
+ *  Finding 2). */
+export function useDockerAvailability(): AppState["dockerAvailability"] {
   const { state } = useAppStore();
-  return useMemo(() => {
-    if (state.dockerStatus !== null) return true;
-    return Object.values(state.sources).some((s) => s.kind === "docker");
-  }, [state.dockerStatus, state.sources]);
+  return state.dockerAvailability;
 }
 
 export function useContainerSources(): SourceDescriptor[] {
