@@ -13,6 +13,9 @@ export interface CreateSourceOptions {
   state?: SourceState;
   detail?: string | null;
   docker?: SourceDescriptor["docker"];
+  /** Present only for `kind: "local"` sources (docs/specs/003-phase-3-
+   *  auto-discovery.md § API contract). */
+  local?: SourceDescriptor["local"];
 }
 
 export class SourceRegistry {
@@ -30,6 +33,7 @@ export class SourceRegistry {
       detail: opts.detail ?? null,
       createdAt: Date.now(),
       docker: opts.docker,
+      local: opts.local,
     };
     this.sources.set(id, descriptor);
     return descriptor;
@@ -58,6 +62,16 @@ export class SourceRegistry {
     const source = this.sources.get(id);
     if (!source) return undefined;
     source.docker = docker;
+    return source;
+  }
+
+  /** Updates a local source's tooltip/section metadata (e.g. the "winning"
+   *  file's path after a glob-target rotation) — docs/specs/003-phase-3-
+   *  auto-discovery.md § API contract. */
+  updateLocalMeta(id: string, local: NonNullable<SourceDescriptor["local"]>): SourceDescriptor | undefined {
+    const source = this.sources.get(id);
+    if (!source) return undefined;
+    source.local = local;
     return source;
   }
 

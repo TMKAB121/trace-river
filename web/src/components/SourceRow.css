@@ -80,9 +80,10 @@
   transform: translateX(calc(var(--toggle-width) - var(--toggle-thumb-size) - 4px));
 }
 
-/* Docker-only STOPPED/ERROR state label (spec 002 § Components & states —
- * Container source row) — real text, not a color-only signal, indented
- * beneath the label to align under it. */
+/* Docker/local STOPPED/ERROR/PENDING state label (spec 002 § Components &
+ * states — Container source row; spec 003 § Components & states — Local
+ * source row extends this to "pending"/WAITING) — real text, not a
+ * color-only signal, indented beneath the label to align under it. */
 .source-row__state-label {
   padding-left: var(--space-12);
   font-size: var(--font-size-xs);
@@ -90,6 +91,7 @@
   letter-spacing: var(--letter-spacing-label);
 }
 
+.source-row__state-label--pending,
 .source-row__state-label--stopped {
   color: var(--color-text-muted);
 }

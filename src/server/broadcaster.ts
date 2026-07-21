@@ -6,7 +6,13 @@
  * See docs/architecture.md § "Transport: WebSocket".
  */
 import type { WebSocket } from "ws";
-import type { DockerStatus, ServerToClientMessage, SourceDescriptor, TraceRiverLog } from "../shared/types.js";
+import type {
+  DetectedFramework,
+  DockerStatus,
+  ServerToClientMessage,
+  SourceDescriptor,
+  TraceRiverLog,
+} from "../shared/types.js";
 
 export const BATCH_INTERVAL_MS = 75;
 export const BATCH_MAX_ENTRIES = 500;
@@ -16,14 +22,25 @@ export const WS_HIGH_WATER_MARK_BYTES = 1_000_000;
 
 export interface ClientConnection {
   readonly ws: WebSocket;
-  /** Sources this client has explicitly unsubscribed from. Absence here == subscribed
-   *  (clients are subscribed to all sources, including future ones, by default). */
+  /** Sources this client is currently excluded from delivery for — the
+   *  live, effective per-connection filter `flush()` reads. Populated both
+   *  by an explicit client `unsubscribe` message *and* by the connect-time
+   *  default seed for a still-`pending`/environment source (`onConnection`,
+   *  src/server/ws.ts); absence here == subscribed (clients are subscribed
+   *  to all sources, including future ones, by default). */
   readonly excludedSourceIds: Set<string>;
   isSubscribed(sourceId: string): boolean;
 }
 
 class ClientConnectionImpl implements ClientConnection {
   readonly excludedSourceIds = new Set<string>();
+  /** Subset of `excludedSourceIds` this connection put there itself via an
+   *  explicit `{"type":"unsubscribe"}` message — as opposed to the
+   *  connect-time default seed for a not-yet-live/environment source. Only
+   *  this subset survives the one-time zero-config auto-subscribe courtesy
+   *  (docs/specs/003-phase-3-auto-discovery.md § Interaction specs,
+   *  Decision 4 — "never a standing override of an explicit unsubscribe"). */
+  readonly explicitlyExcludedSourceIds = new Set<string>();
   constructor(readonly ws: WebSocket) {}
   isSubscribed(sourceId: string): boolean {
     return !this.excludedSourceIds.has(sourceId);
@@ -59,11 +76,36 @@ export class Broadcaster {
   }
 
   subscribe(conn: ClientConnection, sourceIds: string[]): void {
-    for (const id of sourceIds) conn.excludedSourceIds.delete(id);
+    const impl = conn as ClientConnectionImpl;
+    for (const id of sourceIds) {
+      impl.excludedSourceIds.delete(id);
+      impl.explicitlyExcludedSourceIds.delete(id);
+    }
   }
 
   unsubscribe(conn: ClientConnection, sourceIds: string[]): void {
-    for (const id of sourceIds) conn.excludedSourceIds.add(id);
+    const impl = conn as ClientConnectionImpl;
+    for (const id of sourceIds) {
+      impl.excludedSourceIds.add(id);
+      impl.explicitlyExcludedSourceIds.add(id);
+    }
+  }
+
+  /** One-time zero-config auto-subscribe courtesy (docs/specs/003-phase-3-
+   *  auto-discovery.md § Interaction specs, Decision 4): fired exactly once,
+   *  by the tailer, on a local/config source's first-ever `pending`->`live`
+   *  transition. Clears `sourceId` from every already-connected client's
+   *  delivery filter *unless* that client explicitly unsubscribed from it
+   *  itself — matching the registry-level `setSubscribed(id, true)` this is
+   *  always called alongside, so an already-open tab actually starts
+   *  receiving entries instead of just showing an updated checkbox (see
+   *  docs/qa/defects/003-phase-3-auto-discovery-2.md, Symptom A). */
+  autoSubscribeAll(sourceId: string): void {
+    for (const conn of this.clients) {
+      if (!conn.explicitlyExcludedSourceIds.has(sourceId)) {
+        conn.excludedSourceIds.delete(sourceId);
+      }
+    }
   }
 
   /** Queue an entry for the next batched flush. */
@@ -105,11 +147,30 @@ export class Broadcaster {
   }
 
   sendSources(conn: ClientConnection, sources: SourceDescriptor[]): void {
-    this.sendJson(conn.ws, { type: "sources", sources });
+    this.sendJson(conn.ws, { type: "sources", sources: this.personalize(conn, sources) });
   }
 
   broadcastSources(sources: SourceDescriptor[]): void {
-    for (const conn of this.clients) this.sendJson(conn.ws, { type: "sources", sources });
+    for (const conn of this.clients) {
+      this.sendJson(conn.ws, { type: "sources", sources: this.personalize(conn, sources) });
+    }
+  }
+
+  /** `local`/`file` source subscription is per-connection, not server-global
+   *  (docs/specs/003-phase-3-auto-discovery.md § API contract: "It is not
+   *  server-global state" — unlike `docker`, spec 002 Decision 5). The
+   *  registry's own `subscribed` field for those kinds is only ever a
+   *  *default template* for a brand-new connection (`onConnection`,
+   *  src/server/ws.ts) — every `sources` message actually sent must report
+   *  each connection's own effective value instead of that shared default,
+   *  or one client's checkbox state (and, more importantly, its unsubscribe
+   *  choice) leaks into every other client's view. */
+  private personalize(conn: ClientConnection, sources: SourceDescriptor[]): SourceDescriptor[] {
+    return sources.map((source) =>
+      source.kind === "local" || source.kind === "file"
+        ? { ...source, subscribed: conn.isSubscribed(source.id) }
+        : source,
+    );
   }
 
   broadcastSourceState(id: string, state: SourceDescriptor["state"], detail: string | null): void {
@@ -134,6 +195,14 @@ export class Broadcaster {
    *  direction (docs/specs/002-phase-2-docker.md § API contract). */
   broadcastDockerStatus(status: DockerStatus, detail: string | null): void {
     for (const conn of this.clients) this.sendJson(conn.ws, { type: "dockerStatus", status, detail });
+  }
+
+  /** Sent once to a newly-connected client, fourth in the WS connection
+   *  sequence (docs/specs/003-phase-3-auto-discovery.md § API contract) —
+   *  only when discovery is enabled server-side. Never rebroadcast
+   *  mid-session (fingerprinting runs once, at startup). */
+  sendDiscovery(conn: ClientConnection, frameworks: DetectedFramework[]): void {
+    this.sendJson(conn.ws, { type: "discovery", frameworks });
   }
 
   clientCount(): number {

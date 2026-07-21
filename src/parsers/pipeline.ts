@@ -35,6 +35,15 @@ export interface SourcePipelineOptions {
    * Never downgrades a level the parser actually found.
    */
   levelFloor?: LogLevel;
+  /**
+   * Pins detection to a single known parser from the start, bypassing the
+   * scoring/lock flow entirely — every entry from the first one onward uses
+   * this parser (docs/configuration.md: "a pinned parser is used without
+   * running detection"). Used by a `traceriver.json` `watch` entry's
+   * `"parser"` field (docs/specs/003-phase-3-auto-discovery.md, acceptance
+   * criterion 6). Never re-locks/re-detects, unlike a normal live-mode lock.
+   */
+  pinnedParser?: FormatParser;
 }
 
 interface ParserSampleStats {
@@ -62,6 +71,7 @@ export class SourcePipeline extends EventEmitter {
 
   private readonly lineSplitter = new LineSplitter();
   private readonly aggregator: MultilineAggregator;
+  private readonly pinned: boolean;
 
   private locked: FormatParser | null = null;
   private detecting = true;
@@ -86,6 +96,12 @@ export class SourcePipeline extends EventEmitter {
     this.aggregator = new MultilineAggregator({
       onEntry: (entry) => this.handleAggregatedEntry(entry),
     });
+
+    this.pinned = options.pinnedParser !== undefined;
+    if (options.pinnedParser) {
+      this.lockTo(options.pinnedParser);
+      this.detecting = false;
+    }
   }
 
   /** Feed a raw byte chunk (from the upload stream / future tailer). */
@@ -235,7 +251,7 @@ export class SourcePipeline extends EventEmitter {
     const log = this.buildLog(entry, effectiveParser);
     this.emit("entries", [log]);
 
-    if (this.mode === "live" && this.failureStreak >= LIVE_RELOCK_FAILURE_STREAK) {
+    if (!this.pinned && this.mode === "live" && this.failureStreak >= LIVE_RELOCK_FAILURE_STREAK) {
       this.unlock();
     }
   }

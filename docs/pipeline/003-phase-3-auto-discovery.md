@@ -1,0 +1,37 @@
+# Pipeline state — 003-phase-3-auto-discovery
+
+Status: complete            <!-- in-progress | complete | stopped -->
+Current phase: 8 — Accepted by product owner 2026-07-20
+Tier: 3 — multi-surface change: new backend subsystem (discovery + tailer + watch config) plus net-new sidebar UI states, and a wire-contract (SourceDescriptor) extension
+Lightened/skipped phases: none — full pipeline
+QA fix-loop iteration: 1/2
+Design fix-loop iteration: 1/2
+
+## Ask
+
+Implement Phase 3 — Auto-Discovery per docs/phases/phase-3-auto-discovery.md: technology fingerprinting of the project root (laravel/symfony/nextjs/go/rails/django/wordpress detectors), macOS environment-level detection (Herd, Valet, Homebrew nginx/php-fpm), dynamic file tailing (EOF start, offset-tracked incremental reads, rotation/truncation handling, chokidar with polling fallback), and explicit `watch` config fallback with dedupe. Testing note from product owner: ~/projects contains real projects for validation; ~/projects/street_bites has Docker containers enabled.
+
+## Phase log
+
+| Phase | Agent | Artifacts | Status | When |
+|---|---|---|---|---|
+| 0 — State file + lane pre-flight | orchestrator | docs/pipeline/003-phase-3-auto-discovery.md; backlog B2 → in-progress (spec 003); lane probes for src/, web/, test/ all allowed | done | 2026-07-20 |
+| 0.5 — Triage | orchestrator | Tier 3 recorded (multi-surface + wire-contract change) | done | 2026-07-20 |
+| 1 — Design | ux-designer | docs/specs/003-phase-3-auto-discovery.md (ready-for-dev), docs/design-system.md (IconInfo added). One open question (Environment section empty-state) answered by product owner: omit when empty. | done | 2026-07-20 |
+| 2 — Implementation | backend-developer + frontend-developer (parallel) | Backend: src/discovery/* (detectors, environment, pattern, index), src/ingest/tail.ts, src/server/routes/discovery.ts + wiring (app-state, index, ws, broadcaster, sources), src/shared/types.ts + config.ts, src/parsers/pipeline.ts + formats/index.ts, package.json (+chokidar@^3.6.0, allowlisted). Verified live: typecheck/build clean, 81/81 tests pass. Frontend: web/src/types.ts, store, Sidebar, FilesSection(+css), EnvironmentSection(+css, new), SourceRow(+css), icons (IconInfo). Web typecheck clean (orchestrator-verified). 3 open questions answered by owner (see log); spec Decision-5 fix dispatched to ux-designer. | done | 2026-07-20 |
+| 3 — QA | qa-engineer | docs/qa/test-plans/003-phase-3-auto-discovery.md; 10 test files under test/discovery/ (28 tests); docs/qa/defects/003-phase-3-auto-discovery-{1,2}.md (both Area: backend); 4 evidence captures in docs/qa/evidence/003-phase-3-auto-discovery/. Gates all PASS; suite 106/109 (3 intentional red regression tests). VERDICT: FAIL — defect 1 (critical): tailer never detects creation of literal non-glob targets; defect 2 (high): `subscribed` not personalized per connection in `sources` broadcasts. | done — FAIL | 2026-07-20 |
+| 4 — QA fix loop (iter 1/2) | backend-developer → qa-engineer | Backend: src/ingest/tail.ts (literal→bracket-glob rewrite), src/server/broadcaster.ts (per-connection `subscribed` + `autoSubscribeAll`), src/CLAUDE.md (stale tail.ts note). QA re-verify: both defects verified-fixed, all gates PASS, suite 109/109. Parent-dir-absent limitation → backlog B3 (owner-accepted, documented). | done — PASS | 2026-07-20 |
+| 5 — Design verification | ux-designer | docs/design-reviews/003-phase-3-auto-discovery.md. VERDICT: CHANGES REQUIRED — 1 finding (Area: backend): auto-discovered/environment sources render bare labels (`laravel`, `worker`) instead of spec's `local:<detector>` form; gap is in backend-populated `SourceDescriptor.label`. Non-blocking note: spec prose says `local.scope` but interface field is `local.origin` (impl correct; spec terminology to clean up). No open questions. | done — CHANGES REQUIRED | 2026-07-20 |
+| 6 — Design fix loop (iter 1/2) | backend-developer → qa-engineer → ux-designer | Backend: src/ingest/tail.ts (deriveLabel returns id verbatim for kind:local), src/shared/types.ts (doc comment). QA: reconciled 2 stale test expectations in test/discovery/watch-config.test.ts (→ local:worker, local:custom-laravel-label), re-captured mixed-sidebar + mixed-sidebar-stopped evidence, gates PASS 109/109. Designer re-review: VERDICT APPROVED; also fixed spec local.scope→local.origin prose (6 occurrences). No open questions. | done — APPROVED | 2026-07-20 |
+| 7 — Documentation | technical-writer | README.md (auto-discovery/tailer sections, chokidar in stack, GET /api/discovery + discovery WS message in API overview, phase 3 → Shipped in roadmap/status), docs/project/overview.md (components, 3-adapter data flow, Known deviations: B3 parent-dir gap + parser-pin built-ins-only; flipped discovery/watch to live), docs/project/features/003-phase-3-auto-discovery.md (new). No open questions. | done | 2026-07-20 |
+
+## Open questions log
+
+- **Phase 1 (ux-designer)**: Environment sidebar section empty-state policy — always render with empty-state (Containers pattern) vs. omit entirely when zero environment sources found. **Product owner answered 2026-07-20: omit when empty** (designer's recommended default; spec already written this way). Sets precedent for future platform-conditional sidebar sections.
+- **Phase 2 (backend-developer)**: Spec self-contradiction on pending local sources' initial subscription (interaction table says unchecked/WAITING; Decision 5 prose says checked). **Product owner answered 2026-07-20: keep as built** — unchecked while WAITING, one-time auto-check on first pending→live. No code change; ux-designer to fix Decision 5 prose to match.
+- **Phase 2 (backend-developer)**: `watch` entry `"parser"` pin resolves only built-in names (monolog/clf/jsonl/raw); unknown name warns at startup and falls back to auto-detect (custom `parsers` array is out of phase-3 scope). **Product owner answered 2026-07-20: accept warn + fallback.** No code change.
+- **Phase 2 (frontend-developer)**: `GET /api/discovery` is a REST mirror for tooling; the SPA consumes discovery via WS only (matches dockerStatus precedent). **Product owner answered 2026-07-20: WS only.** No code change.
+- **Phase 2 (frontend-developer, operational)**: frontend agent couldn't typecheck (devDeps not installed at the time). Resolved in-pipeline: backend installed deps; orchestrator ran `tsc -p web/tsconfig.json --noEmit` — clean.
+- **Phase 3 (qa-engineer)**: Does critical defect 1 (literal-path creation never detected by tailer) block release, or accept Laravel-only zero-config + fast-follow? **Product owner answered 2026-07-20: fix now in the fix loop** (both defects batched to backend-developer).
+- **Phase 3 (qa-engineer)**: Stale `src/CLAUDE.md` line ("tail.ts doesn't exist yet (phase 3)"). **Product owner answered 2026-07-20: backend-developer fixes it in the same batch** (src/ is its lane).
+- **Phase 4 (backend-developer, fix loop iter 1)**: Pre-existing limitation surfaced while fixing defect 1 — chokidar on macOS/fsevents doesn't reliably fire creation events when the watch target's *parent directory* is absent at startup (affects both literal and glob patterns, incl. Laravel's own default if `storage/logs/` is missing). Realistic zero-config case (fresh Laravel ships `storage/logs/`, only `laravel.log` absent) is covered/works. **Product owner answered 2026-07-20: document as known limitation + file backlog item** (outside exit criteria; not fixed this phase). → backlog B3 filed; technical-writer to note under known deviations in Phase 7.

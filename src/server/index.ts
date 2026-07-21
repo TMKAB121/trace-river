@@ -22,6 +22,7 @@ import { registerSourcesRoute } from "./routes/sources.js";
 import { registerStatusRoute } from "./routes/status.js";
 import { registerReplayRoute } from "./routes/replay.js";
 import { registerDockerStatusRoute } from "./routes/docker-status.js";
+import { registerDiscoveryRoute } from "./routes/discovery.js";
 import { UPLOAD_HARD_CAP_BYTES } from "../ingest/upload.js";
 import { DEFAULT_BUFFER, DEFAULT_PORT, type ResolvedConfig } from "../shared/config.js";
 
@@ -70,16 +71,19 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       buffer: options.buffer ?? DEFAULT_BUFFER,
       open: true,
       configPath: null,
+      configDir: options.cwd ?? process.cwd(),
       watch: [],
-      // Docker off by default when no explicit config is supplied — this
-      // fallback is only ever reached by test/dev harnesses that omit
-      // `config` (cli.ts/dev-entry.ts always resolve one via
-      // src/shared/config.ts, whose own default is `docker.enabled: true`).
-      // Keeping it off here keeps every pre-phase-2 test's `startServer()`
-      // call fully inert (no socket probing/timeouts), matching phase 1's
-      // shipped behavior exactly.
+      // Docker/discovery off by default when no explicit config is supplied
+      // — this fallback is only ever reached by test/dev harnesses that
+      // omit `config` (cli.ts/dev-entry.ts always resolve one via
+      // src/shared/config.ts, whose own defaults are `docker.enabled: true`
+      // / `discovery.enabled: true`). Keeping both off here keeps every
+      // pre-phase-2/3 test's `startServer()` call fully inert (no socket
+      // probing/timeouts, no fingerprinting the test's actual cwd or this
+      // machine's real environment tooling), matching phase 1's shipped
+      // behavior exactly.
       docker: { enabled: false },
-      discovery: {},
+      discovery: { enabled: false },
       parsers: [],
     } satisfies ResolvedConfig);
 
@@ -131,6 +135,14 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   // never needing a follow-up correction.
   await state.docker.start();
 
+  // Same reasoning as docker.start() above, for local sources: every tailed
+  // target's chokidar watcher has completed its initial existence scan (so
+  // `state.sources` already holds the correct pending-vs-live state) before
+  // any client can connect — "Discovery runs once, before any client
+  // connects" (docs/specs/003-phase-3-auto-discovery.md § Interaction
+  // specs).
+  await state.tail.start();
+
   const url = `http://127.0.0.1:${port}/?token=${token}`;
 
   return {
@@ -140,6 +152,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     token,
     url,
     async close() {
+      state.tail.stop();
       state.docker.stop();
       state.broadcaster.stop();
       await app!.close();
@@ -181,6 +194,7 @@ function buildApp(state: AppState, webDist: string): FastifyInstance {
   registerStatusRoute(app, state);
   registerReplayRoute(app, state);
   registerDockerStatusRoute(app, state);
+  registerDiscoveryRoute(app, state);
 
   if (existsSync(webDist)) {
     app.register(fastifyStatic, { root: webDist });

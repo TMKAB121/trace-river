@@ -30,6 +30,7 @@ export class SourcePipeline extends EventEmitter {
     levelFloor;
     lineSplitter = new LineSplitter();
     aggregator;
+    pinned;
     locked = null;
     detecting = true;
     linesSeenForDetection = 0;
@@ -52,6 +53,11 @@ export class SourcePipeline extends EventEmitter {
         this.aggregator = new MultilineAggregator({
             onEntry: (entry) => this.handleAggregatedEntry(entry),
         });
+        this.pinned = options.pinnedParser !== undefined;
+        if (options.pinnedParser) {
+            this.lockTo(options.pinnedParser);
+            this.detecting = false;
+        }
     }
     /** Feed a raw byte chunk (from the upload stream / future tailer). */
     feed(chunk) {
@@ -189,7 +195,7 @@ export class SourcePipeline extends EventEmitter {
         }
         const log = this.buildLog(entry, effectiveParser);
         this.emit("entries", [log]);
-        if (this.mode === "live" && this.failureStreak >= LIVE_RELOCK_FAILURE_STREAK) {
+        if (!this.pinned && this.mode === "live" && this.failureStreak >= LIVE_RELOCK_FAILURE_STREAK) {
             this.unlock();
         }
     }

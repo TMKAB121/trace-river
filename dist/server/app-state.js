@@ -2,7 +2,10 @@ import { RingBuffer } from "./ring-buffer.js";
 import { Broadcaster } from "./broadcaster.js";
 import { SourceRegistry } from "./sources.js";
 import { DockerManager } from "../ingest/docker.js";
+import { TailManager } from "../ingest/tail.js";
+import { runDiscovery } from "../discovery/index.js";
 export function createAppState(opts) {
+    const cwd = opts.cwd ?? process.cwd();
     const state = {
         ringBuffer: new RingBuffer(opts.config.buffer),
         broadcaster: new Broadcaster(),
@@ -17,8 +20,18 @@ export function createAppState(opts) {
         enabled: opts.config.docker.enabled ?? true,
         include: opts.config.docker.include ?? [],
         exclude: opts.config.docker.exclude ?? [],
-        cwd: opts.cwd ?? process.cwd(),
+        cwd,
     });
+    // Fingerprinting/dedup is synchronous (fast fs.existsSync checks — see
+    // src/discovery/); only actually watching the resolved targets
+    // (TailManager.start(), awaited by src/server/index.ts before the WS
+    // endpoint accepts connections) is async.
+    const discoveryResult = runDiscovery(cwd, opts.config);
+    state.discovery = {
+        enabled: discoveryResult.enabled,
+        frameworks: discoveryResult.frameworks,
+    };
+    state.tail = new TailManager(state, discoveryResult.targets);
     return state;
 }
 //# sourceMappingURL=app-state.js.map

@@ -116,6 +116,19 @@ export function IconX(props: IconProps) {
   );
 }
 
+/** Circled "i" — spec 003 § Design tokens used ("new hand-authored icon,
+ *  added to design-system.md § Iconography"); used only for the Files
+ *  section's no-file-target framework note. */
+export function IconInfo(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="10" cy="10" r="7.25" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="10" cy="6.7" r="0.95" fill="currentColor" />
+      <path d="M10 9.2v4.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IconArrowDown(props: IconProps) {
   return (
     <svg {...base(props)}>
