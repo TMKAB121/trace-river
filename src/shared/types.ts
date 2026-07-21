@@ -44,6 +44,14 @@ export interface TraceRiverLog {
 
   /** True when body holds aggregated continuation lines. */
   multiline: boolean;
+
+  /** This entry's ErrorGroup fingerprint. Non-null only when level is ERROR
+   *  or FATAL and grouping has run (same tick as ingestion — never a later,
+   *  separate update to an already-broadcast entry). null for every other
+   *  level, always. Lets the stream row offer "Generate AI Prompt" directly
+   *  (docs/specs/004-phase-4-error-intelligence.md) without a lookup round
+   *  trip to resolve which group a given row belongs to. */
+  fingerprint: string | null;
 }
 
 /** A `TraceRiverLog` before the ring buffer assigns its monotonic `id`. */
@@ -171,6 +179,37 @@ export interface DetectedFramework {
  */
 export type DockerStatus = "not_installed" | "not_running" | "permission_denied" | "connected";
 
+/**
+ * A server-side grouping of recurring ERROR/FATAL occurrences that share a
+ * fingerprint (docs/specs/004-phase-4-error-intelligence.md § API contract).
+ * Mirrored by the WS `errorGroups` push and `GET /api/errors`. The client
+ * never computes fingerprints, spike detection, or grouping itself.
+ */
+export interface ErrorGroup {
+  fingerprint: string;
+  /** Normalized message; placeholder segments rendered as literal "⟨…⟩". */
+  title: string;
+  level: "ERROR" | "FATAL";
+  /** Every distinct TraceRiverLog.source that has emitted this fingerprint.
+   *  In practice, under this spec's fingerprint namespace (§ Interaction
+   *  specs), exactly one entry. */
+  sources: string[];
+  count: number;
+  firstSeen: number; // epoch ms
+  lastSeen: number; // epoch ms
+  /** Up to 10 ring-buffer ids: the oldest still-resolvable occurrence
+   *  (pinned) plus up to 9 most-recent occurrences (rolling). */
+  sampleEntryIds: number[];
+  /** Rolling 30-minute occurrence histogram, oldest → newest, one bucket
+   *  per minute. */
+  perMinute: number[];
+  /** Server-computed heuristic (§ Interaction specs — Spike detection). */
+  spiking: boolean;
+  /** True once any occurrence this group has ever recorded has aged out of
+   *  the ring buffer. Sticky — never reverts to false. */
+  rawEntriesEvicted: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket protocol
 // ---------------------------------------------------------------------------
@@ -182,7 +221,8 @@ export type ServerToClientMessage =
   | { type: "dropped"; count: number }
   | { type: "cleared" }
   | { type: "dockerStatus"; status: DockerStatus; detail: string | null }
-  | { type: "discovery"; frameworks: DetectedFramework[] };
+  | { type: "discovery"; frameworks: DetectedFramework[] }
+  | { type: "errorGroups"; groups: ErrorGroup[] };
 
 export type ClientToServerMessage =
   | { type: "subscribe"; sourceIds: string[] }

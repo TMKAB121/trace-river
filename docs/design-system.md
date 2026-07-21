@@ -150,6 +150,8 @@ labels) — not just log content — matching the concept art.
 | `--toggle-width` / `--toggle-height` | `36px` / `20px` |
 | `--toggle-thumb-size` | `16px` |
 | `--checkbox-size` | `16px` |
+| `--sparkline-width` / `--sparkline-height` | `64px` / `20px` — added for [spec 004](specs/004-phase-4-error-intelligence.md): the Errors panel card's per-minute occurrence-histogram sparkline. |
+| `--modal-max-width` | `640px` — added for [spec 004](specs/004-phase-4-error-intelligence.md): the AI Prompt Preview modal dialog. |
 
 ## Motion
 
@@ -157,6 +159,7 @@ labels) — not just log content — matching the concept art.
 |---|---|---|
 | `--motion-fast` | `120ms ease-out` | Hover/focus transitions |
 | `--motion-base` | `200ms ease-out` | Row expand/collapse height animation, drag-over overlay fade |
+| `--motion-pulse` | `1.6s ease-in-out infinite` | Added for [spec 004](specs/004-phase-4-error-intelligence.md) — the sidebar's "SPIKING" indicator chip's repeating opacity pulse. The first *repeating* motion token; `--motion-fast`/`--motion-base` are one-shot transition durations, not animations. Like them, suppressed under `prefers-reduced-motion: reduce` (the chip renders static, fully legible, un-animated — no information is carried by the pulse itself, only by the chip's icon+text, so suppressing it loses nothing). |
 | `--debounce-search` | `250ms` | Search input debounce |
 
 ## Z-index
@@ -165,6 +168,8 @@ labels) — not just log content — matching the concept art.
 |---|---|---|
 | `--z-dragover-overlay` | `40` | Full-viewport drag-over overlay |
 | `--z-jump-button` | `50` | "↓ Live" floating button |
+| `--z-modal-overlay` | `90` | Added for [spec 004](specs/004-phase-4-error-intelligence.md) — the AI Prompt Preview modal's dimmed backdrop. |
+| `--z-modal` | `91` | Added for [spec 004](specs/004-phase-4-error-intelligence.md) — the AI Prompt Preview modal dialog itself. Deliberately below `--z-toast` — a toast (e.g. "Docker connected") stays visible/glanceable even while the modal is open; toasts are global, ambient notices that shouldn't be suppressible by any one feature's modal. |
 | `--z-toast` | `100` | Transient toasts (dropped-entries notice, clear confirmation) |
 
 ## Iconography
@@ -182,3 +187,24 @@ level color). This requires no new dependency.
 notices (e.g. "Next.js detected — output is on stdout…") — neutral
 `--color-text-muted`, matching the rest of the set; no new color/size token
 needed.
+
+Three more icons were added for [spec 004](specs/004-phase-4-error-intelligence.md)
+(error intelligence), following the same hand-authored, `currentColor`,
+16–20px convention — no new dependency, no new color/size token:
+
+- `IconWarning` (triangle + exclamation) — decorative, always paired with a
+  visible text label (never the sole carrier of information): the "Errors
+  Only" toggle and the "Latest Error" button. Not used on the sidebar's
+  per-source error-count badge (the numeral alone is the required text
+  signal there — no icon) or the top bar's "Errors" view tab (plain
+  "Errors · `<n>`" text, matching the Stream tab's own icon-free treatment).
+- `IconBolt` (lightning bolt) — the "SPIKING" indicator chip (Errors panel
+  card and sidebar source row), always paired with the word "SPIKING".
+  Renders via `currentColor` inside the chip's filled context, resolving to
+  `--color-text-inverse` there — same icon-inherits-chip-color convention
+  already implicit in the rest of this set.
+- `IconSparkle` (four-point sparkle/diamond) — "Generate AI Prompt", matching
+  the glyph already visible in
+  [`assets/traceriver_ui_concept.png`](../assets/traceriver_ui_concept.png)'s
+  expanded-row example, which [spec 001](specs/001-phase-1-core-console.md)
+  explicitly deferred to this phase.

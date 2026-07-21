@@ -71,14 +71,31 @@
   --toggle-height: 20px;
   --toggle-thumb-size: 16px;
   --checkbox-size: 16px;
+  /* Added for spec 004 (error intelligence) — the Errors panel card's
+     per-minute occurrence-histogram sparkline and the AI Prompt Preview
+     modal dialog. */
+  --sparkline-width: 64px;
+  --sparkline-height: 20px;
+  --modal-max-width: 640px;
 
   /* Motion */
   --motion-fast: 120ms ease-out;
   --motion-base: 200ms ease-out;
+  /* Added for spec 004 — the SPIKING indicator chip's repeating opacity
+     pulse (the app's first repeating-animation token). Suppression under
+     prefers-reduced-motion is applied per-component (the chip's own CSS
+     disables the animation entirely rather than zeroing this duration,
+     since zeroing an `infinite` iteration count wouldn't actually render
+     static). */
+  --motion-pulse: 1.6s ease-in-out infinite;
 
   /* Z-index */
   --z-dragover-overlay: 40;
   --z-jump-button: 50;
+  /* Added for spec 004 — the AI Prompt Preview modal (the app's first
+     modal), deliberately below --z-toast so a toast still surfaces over it. */
+  --z-modal-overlay: 90;
+  --z-modal: 91;
   --z-toast: 100;
 }
 

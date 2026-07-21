@@ -17,6 +17,40 @@ export function formatTimestamp(epochMs: number): string {
   );
 }
 
+/**
+ * Card-density timestamp (docs/specs/004-phase-4-error-intelligence.md §
+ * Components & states — ErrorGroup card First/last seen): "YYYY-MM-DD
+ * HH:mm:ss", or just "HH:mm:ss" when the date is today — extending
+ * `formatTimestamp`'s convention minimally for the card's denser layout.
+ */
+export function formatShortTimestamp(epochMs: number): string {
+  const d = new Date(epochMs);
+  const now = new Date();
+  const isToday =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  if (isToday) return time;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${time}`;
+}
+
+/**
+ * Fixed-breakpoint relative time, no unit suffix (docs/specs/
+ * 004-phase-4-error-intelligence.md § Components & states — ErrorGroup card
+ * First/last seen): < 60s → "<n>s"; < 60min → "<n>m"; < 24h → "<n>h"; else →
+ * "<n>d". Callers append " ago".
+ */
+export function formatRelativeShort(epochMs: number): string {
+  const diffMs = Math.max(0, Date.now() - epochMs);
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+}
+
 export const BYTES_PER_MB = 1024 * 1024;
 export const SOFT_WARN_BYTES = 50 * BYTES_PER_MB;
 export const HARD_CAP_BYTES = 500 * BYTES_PER_MB;

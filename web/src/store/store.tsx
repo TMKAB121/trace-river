@@ -13,6 +13,7 @@ import {
   LOG_LEVELS,
   type DetectedFramework,
   type DockerStatus,
+  type ErrorGroup,
   type LogLevel,
   type ServerMessage,
   type SourceDescriptor,
@@ -136,6 +137,31 @@ export interface AppState {
    *  gives up waiting for one (see `DISCOVERY_SETTLE_GUARD_MS`); "enabled"/
    *  "disabled" are terminal for the life of the page. */
   discoveryAvailability: "unknown" | "enabled" | "disabled";
+
+  /** Which top-bar tab is active (docs/specs/004-phase-4-error-intelligence.md
+   *  § Layout — view switcher). Freeze/Clear/Latest-Error/Search apply only
+   *  to the stream and are hidden (not shown-disabled) while "errors". */
+  view: "stream" | "errors";
+  /** Full current group list from the most recent WS `errorGroups` message
+   *  (§ API contract — always the complete, full-replace-on-change list). */
+  errorGroups: ErrorGroup[];
+  /** Fourth (AND) stream filter, independent of the level chips (§
+   *  Interaction specs — Errors Only toggle). */
+  errorsOnly: boolean;
+  /** Source-scope filter chip (§ Interaction specs — Per-source error badge):
+   *  set by clicking a sidebar source's error badge; independent of any
+   *  source's visible/subscribed state. */
+  scopeSourceId: string | null;
+  /** Errors panel sort axis (§ Components & states — Errors-view filter row). */
+  errorsSort: "recency" | "count";
+  /** Fingerprint of the group whose AI Prompt Preview modal is open, or
+   *  null when closed (§ Interaction specs — AI Prompt Preview modal). */
+  promptFingerprint: string | null;
+  /** Set by "jump to latest error" (§ Interaction specs) — StreamPanel
+   *  watches `scrollNonce` to scroll `scrollToEntryId` into view even on a
+   *  repeat jump to the same id. */
+  scrollToEntryId: number | null;
+  scrollNonce: number;
 }
 
 const initialState: AppState = {
@@ -162,6 +188,14 @@ const initialState: AppState = {
   showAllContainersTouched: false,
   frameworks: [],
   discoveryAvailability: "unknown",
+  view: "stream",
+  errorGroups: [],
+  errorsOnly: false,
+  scopeSourceId: null,
+  errorsSort: "recency",
+  promptFingerprint: null,
+  scrollToEntryId: null,
+  scrollNonce: 0,
 };
 
 type Action =
@@ -194,7 +228,16 @@ type Action =
   | { type: "DISMISS_DOCKER_STATUS_CARD"; status: DockerStatus }
   | { type: "SETTLE_DOCKER_AVAILABILITY"; value: "enabled" | "disabled" }
   | { type: "SET_DISCOVERY"; frameworks: DetectedFramework[] }
-  | { type: "SETTLE_DISCOVERY_AVAILABILITY"; value: "enabled" | "disabled" };
+  | { type: "SETTLE_DISCOVERY_AVAILABILITY"; value: "enabled" | "disabled" }
+  | { type: "SET_ERROR_GROUPS"; groups: ErrorGroup[] }
+  | { type: "SET_VIEW"; view: "stream" | "errors" }
+  | { type: "TOGGLE_ERRORS_ONLY" }
+  | { type: "SET_SCOPE_SOURCE"; sourceId: string }
+  | { type: "CLEAR_SCOPE_SOURCE" }
+  | { type: "SET_ERRORS_SORT"; sort: "recency" | "count" }
+  | { type: "OPEN_PROMPT"; fingerprint: string }
+  | { type: "CLOSE_PROMPT" }
+  | { type: "SET_SCROLL_TARGET"; entryId: number };
 
 function sortedSourceOrder(sources: Record<string, SourceDescriptor>): string[] {
   return Object.values(sources)
@@ -231,6 +274,25 @@ function mergeEntries(
   const merged = existing.length > 0 ? existing.concat(fresh) : fresh;
   if (merged.length <= capacity) return merged;
   return merged.slice(merged.length - capacity);
+}
+
+/** The highest-id ERROR/FATAL entry among the entries a "Clear filters" +
+ *  jump would land on (docs/specs/004-phase-4-error-intelligence.md §
+ *  Interaction specs — Jump to latest error): search text and level chips
+ *  are treated as reset (so any level qualifies before the ERROR/FATAL
+ *  check below), but Errors Only / the scope chip are NOT reset — they stay
+ *  in effect exactly as the current state has them, same as a source's own
+ *  visibility toggle. */
+function findLatestVisibleError(state: AppState): TraceRiverLog | null {
+  let best: TraceRiverLog | null = null;
+  for (const entry of state.entries) {
+    if (entry.level !== "ERROR" && entry.level !== "FATAL") continue;
+    const source = state.sources[entry.source];
+    if (source && !source.visible) continue;
+    if (state.scopeSourceId && entry.source !== state.scopeSourceId) continue;
+    if (!best || entry.id > best.id) best = entry;
+  }
+  return best;
 }
 
 function reducer(state: AppState, action: Action): AppState {
@@ -440,6 +502,39 @@ function reducer(state: AppState, action: Action): AppState {
       if (state.discoveryAvailability !== "unknown") return state;
       return { ...state, discoveryAvailability: action.value };
 
+    case "SET_ERROR_GROUPS":
+      return { ...state, errorGroups: action.groups };
+
+    case "SET_VIEW":
+      return { ...state, view: action.view };
+
+    case "TOGGLE_ERRORS_ONLY": {
+      const next = !state.errorsOnly;
+      // "Manually turning Errors Only off while a scope chip is active also
+      // clears the scope chip" (§ Interaction specs — Per-source error badge
+      // § Clearing) — a source-scoped non-error view isn't a state this
+      // feature produces.
+      return { ...state, errorsOnly: next, scopeSourceId: next ? state.scopeSourceId : null };
+    }
+
+    case "SET_SCOPE_SOURCE":
+      return { ...state, scopeSourceId: action.sourceId, errorsOnly: true, view: "stream" };
+
+    case "CLEAR_SCOPE_SOURCE":
+      return { ...state, scopeSourceId: null };
+
+    case "SET_ERRORS_SORT":
+      return { ...state, errorsSort: action.sort };
+
+    case "OPEN_PROMPT":
+      return { ...state, promptFingerprint: action.fingerprint };
+
+    case "CLOSE_PROMPT":
+      return { ...state, promptFingerprint: null };
+
+    case "SET_SCROLL_TARGET":
+      return { ...state, scrollToEntryId: action.entryId, scrollNonce: state.scrollNonce + 1 };
+
     default:
       return state;
   }
@@ -461,6 +556,15 @@ export interface AppActions {
   startUpload: (file: File) => Promise<void>;
   toggleShowAllContainers: () => void;
   dismissDockerStatusCard: (status: DockerStatus) => void;
+  setView: (view: "stream" | "errors") => void;
+  toggleErrorsOnly: () => void;
+  setScopeSource: (sourceId: string) => void;
+  clearScopeSource: () => void;
+  setErrorsSort: (sort: "recency" | "count") => void;
+  openPrompt: (fingerprint: string) => void;
+  closePrompt: () => void;
+  jumpToLatestError: () => void;
+  announce: (message: string) => void;
 }
 
 interface AppStoreContextValue {
@@ -508,6 +612,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // above, applied to spec 003's `discovery` message settle guard.
   const discoveryAvailabilityRef = useRef<AppState["discoveryAvailability"]>("unknown");
   const discoverySettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors `state`, updated every render (not just in an effect) — read
+  // synchronously inside action creators below (whose `useMemo([])` closure
+  // is otherwise fixed at mount) so e.g. `jumpToLatestError` always computes
+  // against the current entries/sources/filters, not a stale snapshot.
+  const stateRef = useRef<AppState>(state);
+  stateRef.current = state;
+  // The element focused at the moment `openPrompt` was called — restored on
+  // `closePrompt` (spec 004 § Accessibility — Focus management).
+  const promptReturnFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     lastIdRef.current = state.entries.length > 0 ? state.entries[state.entries.length - 1].id : -Infinity;
@@ -656,6 +769,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             // arrival (spec 003 Decision 6: silence is correct here too).
             dispatch({ type: "SET_DISCOVERY", frameworks: msg.frameworks });
             break;
+          case "errorGroups":
+            // Sent right after `discovery`/`dockerStatus`/`sources` on every
+            // connection (even when `[]`) and live thereafter — always the
+            // full current group list, no announcement per-group (spec 004
+            // § Accessibility — Live region strategy: would spam the region
+            // at realistic volume; the sidebar badge / tab count are the
+            // discoverable signal instead).
+            dispatch({ type: "SET_ERROR_GROUPS", groups: msg.groups });
+            break;
           case "dropped":
             dispatch({ type: "SHOW_TOAST", message: `${msg.count} entries dropped — resyncing…` });
             dispatch({ type: "SET_ANNOUNCEMENT", message: `${msg.count} entries dropped, resyncing` });
@@ -757,6 +879,49 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       dismissToast: () => dispatch({ type: "DISMISS_TOAST" }),
       toggleShowAllContainers: () => dispatch({ type: "TOGGLE_SHOW_ALL_CONTAINERS" }),
       dismissDockerStatusCard: (status) => dispatch({ type: "DISMISS_DOCKER_STATUS_CARD", status }),
+      setView: (view) => dispatch({ type: "SET_VIEW", view }),
+      toggleErrorsOnly: () => dispatch({ type: "TOGGLE_ERRORS_ONLY" }),
+      setScopeSource: (sourceId) => {
+        // "'<n> errors from <source id>' is announced once, at the moment
+        // the click-to-filter scope chip is applied" (spec 004 §
+        // Accessibility — Live region strategy) — n is the same sum the
+        // sidebar badge itself shows.
+        const count = stateRef.current.errorGroups.reduce(
+          (sum, g) => (g.sources.includes(sourceId) ? sum + g.count : sum),
+          0,
+        );
+        dispatch({ type: "SET_SCOPE_SOURCE", sourceId });
+        dispatch({ type: "SET_ANNOUNCEMENT", message: `${count} errors from ${sourceId}` });
+      },
+      clearScopeSource: () => dispatch({ type: "CLEAR_SCOPE_SOURCE" }),
+      setErrorsSort: (sort) => dispatch({ type: "SET_ERRORS_SORT", sort }),
+      openPrompt: (fingerprint) => {
+        promptReturnFocusRef.current = document.activeElement as HTMLElement | null;
+        dispatch({ type: "OPEN_PROMPT", fingerprint });
+      },
+      closePrompt: () => {
+        dispatch({ type: "CLOSE_PROMPT" });
+        const el = promptReturnFocusRef.current;
+        promptReturnFocusRef.current = null;
+        if (el && document.contains(el)) {
+          el.focus();
+        }
+      },
+      jumpToLatestError: () => {
+        // "resets search text/query to empty and all level chips back to
+        // active ... then, among the now-recomputed visible entries, finds
+        // the one with the highest id whose level ∈ {ERROR, FATAL}" (spec
+        // 004 § Interaction specs — Jump to latest error). "Also switches
+        // the main panel to the Stream tab first, if the Errors tab was
+        // active" — done unconditionally, not gated on a target existing.
+        const target = findLatestVisibleError(stateRef.current);
+        dispatch({ type: "SET_VIEW", view: "stream" });
+        dispatch({ type: "RESET_FILTERS" });
+        if (target) {
+          dispatch({ type: "SET_SCROLL_TARGET", entryId: target.id });
+        }
+      },
+      announce: (message) => dispatch({ type: "SET_ANNOUNCEMENT", message }),
       startUpload: async (file: File) => {
         if (file.size > HARD_CAP_BYTES) {
           window.alert("This file is over the 500 MB limit and can't be loaded.");
@@ -841,13 +1006,28 @@ export function useVisibleEntries(): TraceRiverLog[] {
       if (!state.activeLevels.has(entry.level)) return false;
       const source = state.sources[entry.source];
       if (source && !source.visible) return false;
+      // Fourth (AND) filter, independent of the level chips (spec 004 §
+      // Interaction specs — Errors Only toggle).
+      if (state.errorsOnly && entry.level !== "ERROR" && entry.level !== "FATAL") return false;
+      // Source-scope filter chip (spec 004 § Interaction specs — Per-source
+      // error badge) — fully independent of any source's own visible flag.
+      if (state.scopeSourceId && entry.source !== state.scopeSourceId) return false;
       if (q) {
         const haystack = `${entry.message}\n${entry.body ?? ""}\n${entry.raw}`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
       return true;
     });
-  }, [state.entries, state.frozen, state.frozenAt, state.searchQuery, state.activeLevels, state.sources]);
+  }, [
+    state.entries,
+    state.frozen,
+    state.frozenAt,
+    state.searchQuery,
+    state.activeLevels,
+    state.sources,
+    state.errorsOnly,
+    state.scopeSourceId,
+  ]);
 }
 
 /** True once the sum of sources' lifetime entry counts exceeds the ring
@@ -929,4 +1109,80 @@ export function useFrameworks(): DetectedFramework[] {
 export function useDiscoveryAvailability(): AppState["discoveryAvailability"] {
   const { state } = useAppStore();
   return state.discoveryAvailability;
+}
+
+/** The current full ErrorGroup list, unsorted (docs/specs/
+ *  004-phase-4-error-intelligence.md § API contract — WS `errorGroups`). */
+export function useErrorGroups(): ErrorGroup[] {
+  const { state } = useAppStore();
+  return state.errorGroups;
+}
+
+/** ErrorGroups sorted per the active Errors-panel sort axis (§ Components &
+ *  states — Errors-view filter row): "recency" → `lastSeen` descending
+ *  (default); "count" → `count` descending. */
+export function useSortedErrorGroups(): ErrorGroup[] {
+  const { state } = useAppStore();
+  return useMemo(() => {
+    const groups = [...state.errorGroups];
+    if (state.errorsSort === "count") {
+      groups.sort((a, b) => b.count - a.count);
+    } else {
+      groups.sort((a, b) => b.lastSeen - a.lastSeen);
+    }
+    return groups;
+  }, [state.errorGroups, state.errorsSort]);
+}
+
+/** Sum of `group.count` across every currently-known ErrorGroup whose
+ *  `sources` array includes `sourceId` (§ Interaction specs — Per-source
+ *  error badge § Badge count) — recomputes live as `errorGroups` arrive. */
+export function useSourceErrorCount(sourceId: string): number {
+  const { state } = useAppStore();
+  return useMemo(
+    () => state.errorGroups.reduce((sum, g) => (g.sources.includes(sourceId) ? sum + g.count : sum), 0),
+    [state.errorGroups, sourceId],
+  );
+}
+
+/** True when at least one of `sourceId`'s groups has `spiking: true` (§
+ *  Components & states — Sidebar source row addition § SPIKING indicator). */
+export function useSourceSpiking(sourceId: string): boolean {
+  const { state } = useAppStore();
+  return useMemo(
+    () => state.errorGroups.some((g) => g.spiking && g.sources.includes(sourceId)),
+    [state.errorGroups, sourceId],
+  );
+}
+
+/** Memoized id → entry lookup over the client's local entry store, used to
+ *  resolve an ErrorGroup's `sampleEntryIds` (§ Interaction specs — Sample
+ *  resolution: an id absent from this map renders the "no longer available"
+ *  fallback rather than a broken row). */
+export function useEntriesById(): Map<number, TraceRiverLog> {
+  const { state } = useAppStore();
+  return useMemo(() => {
+    const map = new Map<number, TraceRiverLog>();
+    for (const entry of state.entries) map.set(entry.id, entry);
+    return map;
+  }, [state.entries]);
+}
+
+/** Jump-to-latest-error eligibility (§ Interaction specs — Jump to latest
+ *  error § Eligibility): true when at least one entry in the client's local
+ *  entry store has `level ∈ {ERROR, FATAL}` and belongs to a currently-
+ *  visible source — mirrors Freeze/Clear's disabled-when-nothing-to-act-on
+ *  convention, independent of Errors Only/the scope chip/search/level
+ *  chips (all of which the action's own "Clear filters" step overrides). */
+export function useHasJumpableError(): boolean {
+  const { state } = useAppStore();
+  return useMemo(
+    () =>
+      state.entries.some((entry) => {
+        if (entry.level !== "ERROR" && entry.level !== "FATAL") return false;
+        const source = state.sources[entry.source];
+        return !source || source.visible;
+      }),
+    [state.entries, state.sources],
+  );
 }

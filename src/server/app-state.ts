@@ -4,6 +4,7 @@ import { SourceRegistry } from "./sources.js";
 import { DockerManager } from "../ingest/docker.js";
 import { TailManager } from "../ingest/tail.js";
 import { runDiscovery } from "../discovery/index.js";
+import { ErrorGroupStore } from "../errors/error-store.js";
 import type { ResolvedConfig } from "../shared/config.js";
 import type { DetectedFramework } from "../shared/types.js";
 
@@ -27,6 +28,17 @@ export interface AppState {
    *  runs once); `tail` is the live adapter that actually reads the files. */
   readonly discovery: { enabled: boolean; frameworks: DetectedFramework[] };
   readonly tail: TailManager;
+  /** Error grouping is unconditional — no config flag (docs/specs/
+   *  004-phase-4-error-intelligence.md § Decisions #6). Lives beside, but
+   *  independent of, the ring buffer: group metadata survives entry
+   *  eviction. */
+  readonly errorGroups: ErrorGroupStore;
+  /** Per-source id -> currently-locked format-parser name. Server-only
+   *  bookkeeping for the AI prompt's "Log format" line (docs/specs/
+   *  004-phase-4-error-intelligence.md § API contract — Prompt assembly) —
+   *  deliberately not part of the wire contract, since it never needs to
+   *  reach the browser for any other purpose. */
+  readonly parserNames: Map<string, string>;
 }
 
 export function createAppState(opts: {
@@ -41,8 +53,10 @@ export function createAppState(opts: {
 }): AppState {
   const cwd = opts.cwd ?? process.cwd();
 
+  const ringBuffer = new RingBuffer(opts.config.buffer);
+
   const state = {
-    ringBuffer: new RingBuffer(opts.config.buffer),
+    ringBuffer,
     broadcaster: new Broadcaster(),
     sources: new SourceRegistry(),
     token: opts.token,
@@ -50,6 +64,8 @@ export function createAppState(opts: {
     startedAt: Date.now(),
     config: opts.config,
     version: opts.version,
+    errorGroups: new ErrorGroupStore(ringBuffer),
+    parserNames: new Map<string, string>(),
   } as AppState;
 
   (state as { docker: DockerManager }).docker = new DockerManager(state, {

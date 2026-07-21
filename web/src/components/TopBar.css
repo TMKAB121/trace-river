@@ -38,9 +38,18 @@
   opacity: 0.5;
 }
 
-.topbar-btn[aria-pressed="true"] {
+.topbar-btn[aria-pressed="true"],
+.topbar-btn[aria-selected="true"] {
   border-color: var(--color-accent-interactive);
   color: var(--color-accent-interactive);
+}
+
+/* View switcher (spec 004 § Components & states — View switcher): same
+   topbar-btn-family pill treatment as Freeze/Clear, active tab handled by
+   the [aria-selected="true"] rule above — no new visual pattern. */
+.view-switcher {
+  display: flex;
+  gap: var(--space-2);
 }
 
 .topbar-btn__badge {
@@ -164,4 +173,66 @@
   background: color-mix(in srgb, var(--color-level-unknown) 18%, transparent);
   border-color: var(--color-level-unknown);
   color: var(--color-level-unknown);
+}
+
+/* Errors Only toggle / source-scope filter chip / Errors-panel sort radios
+   (spec 004 § Components & states — Stream-view toolbar additions, §
+   Errors-view toolbar/filter-row; § Design tokens used: "reuses the
+   existing color-mix(...) 18%-tint pattern already implemented ... for
+   active level chips"). */
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-2);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-label);
+  text-transform: uppercase;
+  border: 1px solid var(--color-text-muted);
+  color: var(--color-text-muted);
+  background: transparent;
+  white-space: nowrap;
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.filter-pill:disabled {
+  opacity: 0.5;
+}
+
+.filter-pill--error-active {
+  background: color-mix(in srgb, var(--color-level-error) 18%, transparent);
+  border-color: var(--color-level-error);
+  color: var(--color-level-error);
+}
+
+/* Errors-panel sort radios reuse the same pill-button visual family as
+   Errors Only, but the accent-interactive tint (not the error tint) — a
+   sort axis has no error-level semantics of its own. */
+.filter-pill--neutral-active {
+  background: color-mix(in srgb, var(--color-accent-interactive) 18%, transparent);
+  border-color: var(--color-accent-interactive);
+  color: var(--color-accent-interactive);
+}
+
+.filter-pill__close {
+  display: flex;
+  color: inherit;
+}
+
+.errors-sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.errors-sort__label {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin-right: var(--space-1);
 }

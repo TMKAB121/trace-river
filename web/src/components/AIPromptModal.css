@@ -1,0 +1,105 @@
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal-overlay);
+  background: color-mix(in srgb, var(--color-bg) 85%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+.modal {
+  position: relative;
+  z-index: var(--z-modal);
+  width: 100%;
+  max-width: var(--modal-max-width);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--color-surface-row-expanded-panel);
+  border: 1px solid var(--color-border-interactive);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.modal__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
+}
+
+.modal__close {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--color-text-muted);
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.modal__close:hover {
+  color: var(--color-text-primary);
+}
+
+.modal__hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  line-height: var(--line-height-relaxed);
+}
+
+.modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.modal__status-text {
+  margin: auto;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-base);
+}
+
+.modal__textarea {
+  flex: 1 1 auto;
+  min-height: 320px;
+  width: 100%;
+  resize: vertical;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-interactive);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-relaxed);
+}
+
+.modal__textarea:focus-visible {
+  border-color: var(--color-accent-interactive);
+}
+
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.modal__copy-btn {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-interactive);
+  color: var(--color-text-inverse);
+  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-base);
+  border: none;
+}

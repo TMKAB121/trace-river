@@ -24,6 +24,7 @@ import { dirname, basename, join } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import { SourcePipeline } from "../parsers/pipeline.js";
 import { PARSER_BY_NAME } from "../parsers/formats/index.js";
+import { ingestParsedEntries } from "../server/ingest-entries.js";
 import type { AppState } from "../server/app-state.js";
 import type { SourceDescriptor, SourceState, TraceRiverLogInput } from "../shared/types.js";
 
@@ -131,9 +132,7 @@ class TailedSource {
     const pinnedParser = target.parserName ? PARSER_BY_NAME[target.parserName] : undefined;
     this.pipeline = new SourcePipeline({ sourceId: target.sourceId, mode: "live", pinnedParser });
     this.pipeline.on("entries", (entries: TraceRiverLogInput[]) => {
-      const inserted = entries.map((e) => this.state.ringBuffer.push(e));
-      this.state.sources.incrementCount(target.sourceId, inserted.length);
-      this.state.broadcaster.enqueueEntries(inserted);
+      ingestParsedEntries(this.state, target.sourceId, entries, this.pipeline.getLockedParserName());
     });
   }
 

@@ -82,6 +82,10 @@ function onConnection(ws: WebSocket, state: AppState): void {
   if (state.discovery.enabled) {
     state.broadcaster.sendDiscovery(conn, state.discovery.frameworks);
   }
+  // Unconditional — error grouping has no enable flag (docs/specs/
+  // 004-phase-4-error-intelligence.md § API contract, Decision 6) — always
+  // the last step of the connection sequence.
+  state.broadcaster.sendErrorGroups(conn, state.errorGroups.list());
 
   ws.on("message", (data) => {
     let message: ClientToServerMessage;

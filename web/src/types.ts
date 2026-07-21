@@ -32,6 +32,36 @@ export interface TraceRiverLog {
   raw: string;
   /** True when body holds aggregated continuation lines. */
   multiline: boolean;
+  /** This entry's ErrorGroup fingerprint (docs/specs/
+   *  004-phase-4-error-intelligence.md § API contract) — non-null only when
+   *  level is ERROR or FATAL and grouping has run (same tick as ingestion).
+   *  null for every other level, always. */
+  fingerprint: string | null;
+}
+
+/** Server-side error group (docs/specs/004-phase-4-error-intelligence.md §
+ *  API contract) — one card per distinct fingerprint in the Errors panel. */
+export interface ErrorGroup {
+  fingerprint: string;
+  /** Normalized message; placeholder segments rendered as literal "⟨…⟩". */
+  title: string;
+  level: "ERROR" | "FATAL";
+  /** Every distinct TraceRiverLog.source that has emitted this fingerprint —
+   *  in practice exactly one entry under this spec's fingerprint namespace. */
+  sources: string[];
+  count: number;
+  firstSeen: number; // epoch ms
+  lastSeen: number; // epoch ms
+  /** Up to 10 ring-buffer ids: the oldest still-resolvable occurrence
+   *  (pinned) plus up to 9 most-recent occurrences (rolling). */
+  sampleEntryIds: number[];
+  /** Rolling 30-minute occurrence histogram, oldest → newest, one bucket per minute. */
+  perMinute: number[];
+  /** Server-computed spike heuristic. */
+  spiking: boolean;
+  /** True once any occurrence this group has ever recorded has aged out of
+   *  the ring buffer. Sticky — never reverts to false. */
+  rawEntriesEvicted: boolean;
 }
 
 /** "pending" added by spec 003 § API contract — produced only by
@@ -120,7 +150,8 @@ export type ServerMessage =
   | { type: "dropped"; count: number }
   | { type: "cleared" }
   | { type: "dockerStatus"; status: DockerStatus; detail: string | null }
-  | { type: "discovery"; frameworks: DetectedFramework[] };
+  | { type: "discovery"; frameworks: DetectedFramework[] }
+  | { type: "errorGroups"; groups: ErrorGroup[] };
 
 /** Client -> server WS message shapes. */
 export type ClientMessage =

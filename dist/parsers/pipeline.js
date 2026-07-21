@@ -77,6 +77,13 @@ export class SourcePipeline extends EventEmitter {
         const withoutCr = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
         this.aggregator.addLine(stripAnsi(withoutCr), sourceTimestamp);
     }
+    /** Currently-locked format parser's name, or null while detection is still
+     *  open (docs/specs/004-phase-4-error-intelligence.md § API contract —
+     *  Prompt assembly's "Log format" line; server-only, never reaches the
+     *  wire). */
+    getLockedParserName() {
+        return this.locked?.name ?? null;
+    }
     /** Signal end-of-stream: flushes any pending partial line/entry and commits detection if still open. */
     end() {
         for (const line of this.lineSplitter.flush())
@@ -232,6 +239,13 @@ export class SourcePipeline extends EventEmitter {
             context: entry.truncated ? { ...(fields.context ?? {}), truncated: true } : fields.context,
             raw: entry.raw,
             multiline,
+            // Fingerprinting is not a parser concern (docs/specs/004-phase-4-error-
+            // intelligence.md § Interaction specs) — it's computed at ring-buffer
+            // insertion time by src/server/ingest-entries.ts, which overwrites this
+            // default for ERROR/FATAL entries. Kept pure here, matching this
+            // pipeline's stage-3/4 "no side knowledge of grouping" contract
+            // (src/CLAUDE.md).
+            fingerprint: null,
         };
     }
 }

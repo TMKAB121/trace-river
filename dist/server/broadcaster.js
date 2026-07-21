@@ -24,9 +24,17 @@ export class Broadcaster {
     clients = new Set();
     pendingEntries = [];
     flushTimer = null;
-    start() {
+    errorGroupsTick = null;
+    /** `onErrorGroupsTick` (docs/specs/004-phase-4-error-intelligence.md
+     *  § API contract): called every flush tick so a purely time-driven group
+     *  change (e.g. a spike clearing once the rate subsides, with no new
+     *  occurrence to otherwise trigger a broadcast) still reaches clients at
+     *  the same ~75ms cadence as `entries`. Optional so every pre-phase-4
+     *  test's bare `broadcaster.start()` call keeps working unchanged. */
+    start(onErrorGroupsTick) {
         if (this.flushTimer)
             return;
+        this.errorGroupsTick = onErrorGroupsTick ?? null;
         this.flushTimer = setInterval(() => this.flush(), BATCH_INTERVAL_MS);
         this.flushTimer.unref?.();
     }
@@ -86,6 +94,13 @@ export class Broadcaster {
             this.enqueueEntry(entry);
     }
     flush() {
+        if (this.errorGroupsTick) {
+            const groups = this.errorGroupsTick();
+            if (groups) {
+                for (const conn of this.clients)
+                    this.sendJson(conn.ws, { type: "errorGroups", groups });
+            }
+        }
         if (this.pendingEntries.length === 0)
             return;
         const batch = this.pendingEntries;
@@ -159,6 +174,14 @@ export class Broadcaster {
      *  mid-session (fingerprinting runs once, at startup). */
     sendDiscovery(conn, frameworks) {
         this.sendJson(conn.ws, { type: "discovery", frameworks });
+    }
+    /** Sent once to a newly-connected client, as the last step of the WS
+     *  connection sequence (docs/specs/004-phase-4-error-intelligence.md
+     *  § API contract) — unconditional, unlike `dockerStatus`/`discovery`
+     *  (error grouping has no enable flag, Decision 6), sent even when the
+     *  current group list is `[]`. */
+    sendErrorGroups(conn, groups) {
+        this.sendJson(conn.ws, { type: "errorGroups", groups });
     }
     clientCount() {
         return this.clients.size;

@@ -8,7 +8,7 @@ TraceRiver is a **single Node.js process** started by the CLI:
 traceriver start
   └── Fastify server bound to 127.0.0.1:<port>
         ├── serves the pre-built React SPA (shipped in the npm tarball at dist/web)
-        ├── REST endpoints (upload, source list, buffer replay)
+        ├── REST endpoints (upload, source list, buffer replay, error groups, AI prompt)
         └── WebSocket endpoint (live log stream + source control)
 ```
 
@@ -48,6 +48,7 @@ server → client
   { type: "entries",  entries: TraceRiverLog[] }        // batched
   { type: "sources",  sources: SourceDescriptor[] }     // full source list on change
   { type: "sourceState", id, state: "live"|"stopped"|"error", detail? }
+  { type: "errorGroups", groups: ErrorGroup[] }         // batched, same ~75ms cadence; sent (even empty) as the last connect-sequence step
 
 client → server
   { type: "subscribe",   sourceIds: string[] }
@@ -64,6 +65,12 @@ client → server
 - **Server ring buffer**: fixed-capacity circular buffer, default **50,000 entries**, configurable via `--buffer` / `traceriver.json`. Oldest entries are evicted silently; the UI shows "showing last N" when eviction has occurred.
 - **Client store**: mirrors the same cap. The virtualized list renders only visible rows, but the backing array is also bounded so a week-long session can't balloon the tab.
 - **Freeze Stream** freezes *rendering only*: incoming batches keep landing in the client store (and server buffer) while frozen, with a "n new entries" badge; unfreezing scrolls to live tail. Nothing is dropped by freezing.
+
+## Error intelligence (phase 4)
+
+Every ERROR/FATAL entry gets a **fingerprint** at ingestion (`src/errors/`): `sha256(source + normalized message + normalized top stack frame)`, with conservative placeholder normalization (timestamps, ids, values, paths — false merges are worse than false splits). Recurrences collapse into server-side `ErrorGroup`s that live **beside the ring buffer** and survive entry eviction (counts/firstSeen persist; samples are flagged evicted). Capped at 500 groups, LRU by `lastSeen`. Each group keeps a rolling 30-minute per-minute histogram; a group is flagged `spiking` when its current rate exceeds 5× its trailing 30-min average and ≥ 10/min absolute (constants in `src/errors/config.ts`). Groups are pushed as `{type:"errorGroups"}` WS batches and served by `GET /api/errors`; the client never computes fingerprints.
+
+`GET /api/errors/:fingerprint/prompt` assembles a copy-ready markdown debugging prompt server-side (error summary, latest sample stack trace, environment metadata from Docker inspect / discovery, the 15 interleaved cross-source entries before the first occurrence, occurrence-pattern summary). A **redaction pass** runs before the prompt leaves the server: placeholder rules re-run over quoted log lines plus secret-pattern scrubbing (bearer tokens, `password=`, AWS-style keys) → `<redacted>`. v1 is clipboard-only — no API keys, no network calls.
 
 ## Security model
 
@@ -95,6 +102,7 @@ src/
   cli/        # commander entry, port resolution, browser-open, token gen
   server/     # fastify wiring, WS broadcaster, ring buffer, REST routes
   ingest/     # adapters: docker.ts, tail.ts, upload.ts
+  errors/     # fingerprinting, ErrorGroup store, spike heuristic, prompt assembly + redaction
   parsers/    # pipeline + format parsers (see log-schema.md)
   shared/     # TraceRiverLog types + WS message types (imported by web/)
 web/          # Vite + React SPA (own tsconfig, builds to dist/web)

@@ -1,4 +1,5 @@
 import { SourcePipeline } from "../parsers/pipeline.js";
+import { ingestParsedEntries } from "../server/ingest-entries.js";
 export const UPLOAD_HARD_CAP_BYTES = 500 * 1024 * 1024;
 export const UPLOAD_SOFT_WARNING_BYTES = 50 * 1024 * 1024;
 export class HardCapExceededError extends Error {
@@ -20,9 +21,7 @@ export async function ingestUpload(state, sourceId, label, stream) {
     state.broadcaster.broadcastSources(state.sources.list());
     const pipeline = new SourcePipeline({ sourceId, mode: "file" });
     pipeline.on("entries", (entries) => {
-        const inserted = entries.map((e) => state.ringBuffer.push(e));
-        state.sources.incrementCount(sourceId, inserted.length);
-        state.broadcaster.enqueueEntries(inserted);
+        ingestParsedEntries(state, sourceId, entries, pipeline.getLockedParserName());
     });
     try {
         await pumpStream(stream, pipeline);

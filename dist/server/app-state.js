@@ -4,10 +4,12 @@ import { SourceRegistry } from "./sources.js";
 import { DockerManager } from "../ingest/docker.js";
 import { TailManager } from "../ingest/tail.js";
 import { runDiscovery } from "../discovery/index.js";
+import { ErrorGroupStore } from "../errors/error-store.js";
 export function createAppState(opts) {
     const cwd = opts.cwd ?? process.cwd();
+    const ringBuffer = new RingBuffer(opts.config.buffer);
     const state = {
-        ringBuffer: new RingBuffer(opts.config.buffer),
+        ringBuffer,
         broadcaster: new Broadcaster(),
         sources: new SourceRegistry(),
         token: opts.token,
@@ -15,6 +17,8 @@ export function createAppState(opts) {
         startedAt: Date.now(),
         config: opts.config,
         version: opts.version,
+        errorGroups: new ErrorGroupStore(ringBuffer),
+        parserNames: new Map(),
     };
     state.docker = new DockerManager(state, {
         enabled: opts.config.docker.enabled ?? true,
