@@ -50,6 +50,11 @@ export interface ResolvedConfig {
   buffer: number;
   open: boolean;
   configPath: string | null;
+  /** Directory `watch` entries' relative paths resolve against — the
+   *  directory containing traceriver.json, or `cwd` when no config file was
+   *  found (docs/configuration.md: "Paths are relative to this file's
+   *  directory"). See src/discovery/index.ts. */
+  configDir: string;
   watch: WatchEntry[];
   docker: DockerConfig;
   discovery: DiscoveryConfig;
@@ -109,8 +114,6 @@ export function resolveConfig(flags: CliFlags, cwd: string = process.cwd()): Res
     throw new Error(`Config file not found: ${configPath}`);
   }
 
-  void dirname; // reserved for future relative-path resolution of `watch` entries
-
   const port = flags.port ?? fileConfig.port ?? DEFAULT_PORT;
   const buffer = flags.buffer ?? fileConfig.buffer ?? DEFAULT_BUFFER;
   const open = flags.open ?? fileConfig.open ?? true;
@@ -125,14 +128,26 @@ export function resolveConfig(flags: CliFlags, cwd: string = process.cwd()): Res
     exclude: fileConfig.docker?.exclude ?? [],
   };
 
+  // discovery.* is fully resolved here (this phase actually acts on it —
+  // src/discovery/) so a plain literal `{}` elsewhere in the codebase (test
+  // fixtures built without going through resolveConfig()) is never
+  // mistaken for "discovery on" — only this function's explicit `?? true`
+  // default does that. See docs/specs/003-phase-3-auto-discovery.md § API
+  // contract / src/discovery/index.ts.
+  const discovery: DiscoveryConfig = {
+    enabled: fileConfig.discovery?.enabled ?? true,
+    disable: fileConfig.discovery?.disable ?? [],
+  };
+
   return {
     port,
     buffer,
     open,
     configPath: resolvedConfigPath,
+    configDir: resolvedConfigPath ? dirname(resolvedConfigPath) : cwd,
     watch: fileConfig.watch ?? [],
     docker,
-    discovery: fileConfig.discovery ?? {},
+    discovery,
     parsers: fileConfig.parsers ?? [],
   };
 }

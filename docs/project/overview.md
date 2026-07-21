@@ -9,9 +9,11 @@ detail lives in [`docs/project/features/`](features/).
 ## What's shipped so far
 
 **Phase 1 — Core Console** (see
-[`features/001-phase-1-core-console.md`](features/001-phase-1-core-console.md))
-and **Phase 2 — Docker Streams** (see
-[`features/002-phase-2-docker.md`](features/002-phase-2-docker.md)).
+[`features/001-phase-1-core-console.md`](features/001-phase-1-core-console.md)),
+**Phase 2 — Docker Streams** (see
+[`features/002-phase-2-docker.md`](features/002-phase-2-docker.md)), and
+**Phase 3 — Auto-Discovery** (see
+[`features/003-phase-3-auto-discovery.md`](features/003-phase-3-auto-discovery.md)).
 Everything described below reflects that shipped state; nothing here is
 aspirational.
 
@@ -25,24 +27,41 @@ TraceRiver runs as a single Node.js process, started by the CLI
   browser at the tokenized session URL, handles `SIGINT`/`SIGTERM` shutdown.
 - **Config resolution** (`src/shared/config.ts`) — merges CLI flags >
   `traceriver.json` (JSONC, comments stripped) > built-in defaults. The file
-  schema already defines `watch`/`docker`/`discovery`/`parsers` sections;
-  as of phase 2, `docker` (`enabled`, `allContainers`, `include`, `exclude`)
-  is fully resolved and acted on — `watch`/`discovery`/`parsers` remain
-  inert scaffolding for later phases.
+  schema defines `watch`/`docker`/`discovery`/`parsers` sections; `docker`
+  (`enabled`, `allContainers`, `include`, `exclude`, as of phase 2) and
+  `discovery` (`enabled`, `disable`, as of phase 3) plus the top-level
+  `watch` array (as of phase 3) are fully resolved and acted on —
+  `discovery.enabled` defaults to `true` when the key is present but the
+  value is omitted; `parsers` (custom regex parsers) remains inert
+  scaffolding.
 - **Server** (`src/server/`) — Fastify bound to `127.0.0.1` only. An
   `onRequest` hook enforces Host/Origin validation on every request and
   bearer-token auth on every `/api/*` route (`src/server/auth.ts`,
   `token.ts`); the WS upgrade checks the token as a query param
   (`src/server/ws.ts`). Serves the pre-built SPA (`dist/web`) via
   `@fastify/static`. REST routes live under `src/server/routes/`
-  (`upload.ts`, `sources.ts`, `status.ts`, `replay.ts`, and, as of phase 2,
-  `docker-status.ts`).
+  (`upload.ts`, `sources.ts`, `status.ts`, `replay.ts`, `docker-status.ts`
+  as of phase 2, and `discovery.ts` as of phase 3).
 - **Ingest** (`src/ingest/`) — `upload.ts`: a streaming multipart-free upload
   handler (`POST /api/upload`) that pipes the raw request body straight into
   the parser pipeline, enforcing the 50 MB soft-warning point and 500 MB
   hard cap without buffering the whole file. `docker.ts` + `docker-client.ts`
-  (phase 2, see below) are the second adapter. `tail.ts` (phase 3, local-file
-  auto-discovery) doesn't exist yet.
+  (phase 2, see below) are the second adapter. `tail.ts` (phase 3) is the
+  third: a `TailManager` owning one `chokidar`-backed `TailedSource` per
+  auto-discovered/`watch`-config target (see below).
+- **Discovery** (`src/discovery/`, phase 3) — `detectors.ts`: seven
+  project-root fingerprint detectors (`laravel`, `symfony`, `nextjs`, `go`,
+  `rails`, `django`, `wordpress`), each a fixed `{ name, detect(root),
+  targets(root), note }` checked directly against the working directory
+  (never subdirectories). `environment.ts`: macOS-only (`no-op` elsewhere)
+  detection of Laravel Herd (`~/Library/Application Support/Herd/Log/*.log`),
+  Valet (`~/.config/valet/Log/nginx-error.log`), and Homebrew nginx/PHP-FPM
+  (`/opt/homebrew/var/log/...`, a hardcoded Apple-Silicon-prefix path with no
+  fixture seam). `pattern.ts`: tilde/glob path resolution and the
+  config-vs-detector dedupe rule (exact match for two globs or two literals;
+  glob-vs-literal overlap otherwise). `index.ts` (`runDiscovery`)
+  orchestrates all three, once, synchronously, at server startup before the
+  WS endpoint accepts any connection — never re-run mid-session.
 - **Docker adapter** (`src/ingest/docker-client.ts`, `docker.ts`) — a
   `DockerManager` per server process (created regardless of
   `docker.enabled`, but only ever connects when it's true). `docker-client.ts`
@@ -72,6 +91,27 @@ TraceRiver runs as a single Node.js process, started by the CLI
   Docker `since` timestamp (the last line actually read, +1ns) rather than
   `tail: 50`, so it never re-reads pre-restart history the `json-file` log
   driver keeps across a restart.
+- **Tailer** (`src/ingest/tail.ts`, phase 3) — `TailManager` owns one
+  `chokidar`-backed `TailedSource` per target from `runDiscovery()`'s
+  combined project/config/environment list, started before the server
+  accepts its first WS connection. Start-at-EOF for any file that already
+  exists at attach time (never floods the ring buffer with history);
+  incremental reads are offset-tracked per tracked file, claimed before the
+  async read resolves so a racing `change` event or the always-on 1 s
+  reconciliation poll never double-reads a range; `size < storedOffset`
+  resets the offset to 0 (truncation/replacement); a glob target's multiple
+  matching files (e.g. Laravel's daily rotation) share one sidebar row,
+  with the most-recently-modified file as the tooltip's `targetPath`. A
+  literal (non-glob) target is rewritten into a single-character
+  bracket-class glob (e.g. `worker.log` → `worker[.]log`) before being
+  handed to `chokidar.watch()`, because chokidar's fsevents/inotify backend
+  only reliably fires `"add"` for a not-yet-existing file when the watched
+  pattern is syntactically a glob — a literal path never fires it, no
+  matter the wait (see § Known deviations). A source's first-ever
+  `pending`→`live` transition (project/config origin only, never
+  environment) auto-subscribes every already-open connection that hasn't
+  explicitly unsubscribed, one time only; a later `stopped`→`live`
+  reappearance never touches `subscribed`.
 - **Uniform Parser Pipeline** (`src/parsers/`) — `line-splitter.ts` (partial
   line buffering across chunk boundaries) → `aggregator.ts` +
   `continuation-heuristic.ts` (multi-line entries, e.g. PHP stack traces,
@@ -83,41 +123,51 @@ TraceRiver runs as a single Node.js process, started by the CLI
   `broadcaster.ts`) — fixed-capacity circular buffer (default 50,000
   entries, `--buffer` overridable); the broadcaster batches WS sends
   (~75 ms / 500-entry cap) and emits `{ type: "dropped" }` if a client's
-  socket backs up, per `docs/architecture.md`.
+  socket backs up, per `docs/architecture.md`. As of phase 3, the `sources`/
+  `sourceState` broadcast's `subscribed` field is computed **per
+  connection** (`{ ...source, subscribed: conn.isSubscribed(source.id) }`)
+  rather than sent as one shared value to every socket — `kind: "file"` and
+  `kind: "local"` sources are per-connection subscriptions by design (unlike
+  Docker's server-global model), so each connection's own
+  `excludedSourceIds` must win over the shared registry default in every
+  broadcast, not just at connect time.
 - **Frontend** (`web/`) — Vite + React 19 SPA. `web/src/api/` (auth, REST,
   WS client), `web/src/store/store.tsx` (the client-side entry store,
-  filtering, freeze/pin state, and, as of phase 2, the tri-state
-  `dockerAvailability` reducer described below), `web/src/components/`
-  (Sidebar, TopBar, StreamPanel/Row/ExpandedPanel, drag-and-drop, toasts,
-  banners, and, as of phase 2, `ContainersSection`/`FilesSection`/
-  `DockerStatusCard`), `web/src/styles/tokens.css` (the terminal-chic
-  design-token mirror of `docs/design-system.md`).
+  filtering, freeze/pin state, the tri-state `dockerAvailability` reducer,
+  and, as of phase 3, `discoveryAvailability`/`frameworks`/environment-source
+  selectors), `web/src/components/` (Sidebar, TopBar, StreamPanel/Row/
+  ExpandedPanel, drag-and-drop, toasts, banners, `ContainersSection`/
+  `FilesSection`/`DockerStatusCard` as of phase 2, and `EnvironmentSection`
+  plus `FilesSection`'s no-file-target framework notes as of phase 3),
+  `web/src/styles/tokens.css` (the terminal-chic design-token mirror of
+  `docs/design-system.md`, extended this phase with `IconInfo`).
 
 ## Data flow
 
 ```
-uploaded file --POST /api/upload-->        line
-docker container --logs()/demux-->   ->  splitter -> aggregator -> format
-                                            |          parsers -> normalize
-                                            v                |
-                                      TraceRiverLog <---------
-                                            |
-                                            v
-                                     ring buffer -> WS broadcaster
-                                                          |
-                                                          v
-                                                    browser SPA (store,
-                                                    virtualized stream)
+uploaded file --POST /api/upload-->
+docker container --logs()/demux-->          line
+local file --chokidar/tail.ts-->     ->   splitter -> aggregator -> format
+                                             |          parsers -> normalize
+                                             v                |
+                                       TraceRiverLog <---------
+                                             |
+                                             v
+                                      ring buffer -> WS broadcaster
+                                                           |
+                                                           v
+                                                     browser SPA (store,
+                                                     virtualized stream)
 ```
 
-Both ingest adapters (uploaded files, live Docker containers) feed the same
-Uniform Parser Pipeline and land in the same ring buffer/broadcaster —
-there is exactly one pipeline regardless of source kind. Local-file
-auto-discovery/tailing (the third ingest adapter `architecture.md`
-describes, `kind: "local"`) is not implemented yet — the `SourceDescriptor`
-shape was already generic enough that phase 1 built the sidebar/stream
-against it without rework, and phase 2 confirms that held for `kind:
-"docker"` too.
+All three ingest adapters (uploaded files, live Docker containers, and, as
+of phase 3, tailed local files) feed the same Uniform Parser Pipeline and
+land in the same ring buffer/broadcaster — there is exactly one pipeline
+regardless of source kind. The `SourceDescriptor` shape was already generic
+enough that phase 1 built the sidebar/stream against it without rework, and
+phases 2 and 3 both confirm that held for `kind: "docker"` and
+`kind: "local"` respectively — the third, previously-reserved `SourceKind`
+is now live.
 
 ## Security model (as implemented)
 
@@ -145,10 +195,17 @@ subscribe, upload guardrails, port-zero handling), `test/docker/` (phase 2 —
 discovery/project-filtering, global subscribe/unsubscribe, TTY/non-TTY
 demux, restart/rename lifecycle, `docker.enabled: false` fallback, daemon
 status endpoints, a high-throughput load test; the suite `describe.skipIf`s
-itself on a host without a reachable Docker daemon), and `test/e2e/` (a
-smoke test that starts the server programmatically and asserts the WS
-stream delivers parsed entries end-to-end, plus a memory/RSS test). Phase 1
-shipped at 60/60 tests passing; phase 2 shipped at 81/81.
+itself on a host without a reachable Docker daemon), `test/discovery/`
+(phase 3 — zero-config Laravel tailing, rotation/truncation handling and
+manual-unsubscribe permanence, `watch` config resolution/dedupe,
+no-file-target framework notes, `discovery.disable`/`discovery.enabled:
+false`, environment-tier sources with `$HOME` fixture-injection so the suite
+never depends on a real Herd/Valet install, a scaled large-file-attach load
+test, and a concurrent-sources load test), and `test/e2e/` (a smoke test
+that starts the server programmatically and asserts the WS stream delivers
+parsed entries end-to-end, plus a memory/RSS test). Phase 1 shipped at
+60/60 tests passing; phase 2 shipped at 81/81; phase 3 shipped at 109/109
+(32 test files total).
 
 ## Known deviations / accepted tradeoffs
 
@@ -159,10 +216,31 @@ shipped at 60/60 tests passing; phase 2 shipped at 81/81.
   criterion 7.
 - `traceriver init` (writing a starter `traceriver.json`) is documented in
   [`docs/configuration.md`](../configuration.md) but not yet implemented —
-  still out of scope as of phase 2.
-- The config file's `watch`/`discovery`/`parsers` sections remain inert
-  scaffolding for phases 3/4 — only `port`/`buffer`/`open` (phase 1) and
-  `docker.*` (phase 2, as of this feature) are actually acted on.
+  still out of scope as of phase 3.
+- The config file's `parsers` section (custom regex parsers) remains inert
+  scaffolding — `port`/`buffer`/`open` (phase 1), `docker.*` (phase 2), and,
+  as of phase 3, `discovery.*` and the top-level `watch` array are all
+  actually acted on. A `watch` entry's `parser` field, however, only pins
+  one of the four **built-in** parser names (`monolog`/`clf`/`jsonl`/`raw`)
+  — it does not consume the separate `parsers` array; an unrecognized
+  `parser` value logs a startup warning and falls back to normal per-source
+  format detection rather than failing to start (`src/discovery/index.ts`
+  `resolveWatchEntries()`).
+- **Tailer misses file creation when a watch target's parent directory is
+  absent at server startup** (backlog item
+  [B3](../backlog.md), product-owner-accepted, filed 2026-07-20): chokidar's
+  fsevents backend on macOS doesn't reliably fire a creation event when the
+  watched pattern's containing directory tree doesn't exist yet at
+  watch-setup time, for both literal and glob patterns. The realistic
+  zero-config case is unaffected — a freshly scaffolded Laravel app already
+  ships `storage/logs/` (only `laravel.log` itself is ever absent) — so this
+  only bites a bespoke `traceriver.json` `watch` entry (or, in principle, a
+  non-Laravel detector) whose target directory doesn't exist yet either. Not
+  to be confused with the separate (already-fixed, pre-release) literal-path
+  detection gap `src/ingest/tail.ts`'s `toChokidarWatchPattern()` works
+  around — that one applied even when the parent directory already existed;
+  this one is specifically about the parent directory itself being absent,
+  and remains open.
 - **Docker `not_installed` vs. `not_running` is a best-effort heuristic**
   (`src/ingest/docker-client.ts` `classifyFailure()`): dockerode/docker-modem
   don't distinguish "daemon absent" from "daemon down" directly, so the

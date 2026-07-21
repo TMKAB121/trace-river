@@ -19,10 +19,28 @@ function dockerMetadataText(source: SourceDescriptor): string | null {
   return image;
 }
 
+/** Local-source tooltip text (spec 003 § Components & states — Local source
+ *  row): resolved absolute target path, plus a trailing config note when
+ *  `local.origin === "config"`, or the state-label detail text appended
+ *  instead (config suffix omitted then — `detail` already carries the
+ *  operative information). */
+function localTooltipText(source: SourceDescriptor): string | null {
+  if (!source.local) return null;
+  const { targetPath, origin } = source.local;
+  if (source.detail) return `${targetPath} — ${source.detail}`;
+  if (origin === "config") return `${targetPath} · configured via traceriver.json`;
+  return targetPath;
+}
+
 /** The row's `title` attribute: a file's existing error-detail tooltip
  *  (spec 001), extended for docker sources with image/compose metadata
- *  (spec 002). Has no effect on the collapsed row's fixed layout/width. */
+ *  (spec 002), and for local sources with the resolved target path +
+ *  config/detail note (spec 003). Has no effect on the collapsed row's
+ *  fixed layout/width. */
 function rowTitle(source: SourceDescriptor): string | undefined {
+  if (source.kind === "local") {
+    return localTooltipText(source) ?? undefined;
+  }
   const parts: string[] = [];
   if (source.kind === "docker") {
     const meta = dockerMetadataText(source);
@@ -34,15 +52,26 @@ function rowTitle(source: SourceDescriptor): string | undefined {
   return parts.length > 0 ? parts.join(" — ") : undefined;
 }
 
+const STATE_LABEL_TEXT: Record<"pending" | "stopped" | "error", string> = {
+  pending: "Waiting",
+  stopped: "Stopped",
+  error: "Error",
+};
+
 export default function SourceRow({ source }: { source: SourceDescriptor }) {
   const { actions } = useAppStore();
 
   const dimmed = !source.subscribed;
-  // State label is scoped to docker sources only (spec 002 § Components &
-  // states — Container source row); file-source rows are unchanged from
-  // spec 001 (error still surfaces only via the tooltip above).
+  // State label is scoped to docker and local sources (spec 002 §
+  // Components & states — Container source row, extended by spec 003 §
+  // Components & states — Local source row to also cover "pending"); file-
+  // source rows are unchanged from spec 001 (error still surfaces only via
+  // the tooltip above).
   const stateLabel =
-    source.kind === "docker" && (source.state === "stopped" || source.state === "error") ? source.state : null;
+    (source.kind === "docker" || source.kind === "local") &&
+    (source.state === "pending" || source.state === "stopped" || source.state === "error")
+      ? source.state
+      : null;
 
   return (
     <li className={`source-row${dimmed ? " source-row--dimmed" : ""}`} title={rowTitle(source)}>
@@ -73,7 +102,7 @@ export default function SourceRow({ source }: { source: SourceDescriptor }) {
       </div>
       {stateLabel && (
         <span className={`source-row__state-label source-row__state-label--${stateLabel}`}>
-          {stateLabel === "stopped" ? "Stopped" : "Error"}
+          {STATE_LABEL_TEXT[stateLabel]}
         </span>
       )}
     </li>

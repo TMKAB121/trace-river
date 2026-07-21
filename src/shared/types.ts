@@ -50,7 +50,14 @@ export interface TraceRiverLog {
 export type TraceRiverLogInput = Omit<TraceRiverLog, "id">;
 
 export type SourceKind = "file" | "docker" | "local";
-export type SourceState = "live" | "stopped" | "error";
+
+/**
+ * `"pending"` is produced only by `kind: "local"` sources whose target file
+ * doesn't exist yet (docs/specs/003-phase-3-auto-discovery.md § API
+ * contract / Decision 2). Docker and file-upload sources never use it —
+ * their existing three-value lifecycles are unchanged.
+ */
+export type SourceState = "live" | "stopped" | "error" | "pending";
 
 export interface SourceDescriptor {
   /** Namespaced id, matches TraceRiverLog.source exactly, e.g. "file:dump.log". */
@@ -61,7 +68,12 @@ export interface SourceDescriptor {
   kind: SourceKind;
 
   /** Display name, e.g. "dump.log" (the id's prefix implies the kind icon;
-   *  the label is the part after the colon). */
+   *  the label is the part after the colon) for `kind: "file"`/`"docker"`.
+   *  `kind: "local"` sources are the one deliberate exception (docs/specs/
+   *  003-phase-3-auto-discovery.md § Layout wireframes/API contract): the
+   *  label is the full id, prefix included, e.g. "local:laravel",
+   *  "herd:nginx-mysite.test" — the sidebar's rendered row text is meant to
+   *  carry the kind-scoped prefix for local/environment sources. */
   label: string;
 
   /** Checkbox state. Server stops sending this source's entries to a
@@ -104,6 +116,52 @@ export interface SourceDescriptor {
     composeService: string | null;
     inCurrentProject: boolean;
   };
+
+  /**
+   * Present only when kind === "local" (docs/specs/003-phase-3-auto-
+   * discovery.md § API contract). Metadata for sidebar section placement
+   * and the tooltip.
+   */
+  local?: {
+    /** How this source was found. Drives sidebar section placement:
+     *  "project" and "config" both render in Files; "environment" renders
+     *  in the Environment section. */
+    origin: "project" | "environment" | "config";
+
+    /** Matched detector name, e.g. "laravel", "herd" — null for a
+     *  traceriver.json watch entry with no matching detector (a pure
+     *  bespoke path). Present (non-null) even when origin === "config" if
+     *  the config entry happened to override a path a detector also
+     *  matched (config wins per configuration.md's dedup rule; the
+     *  detector name is retained here for the tooltip/traceability). */
+    detector: string | null;
+
+    /** Resolved absolute path this source tails (post tilde/glob
+     *  resolution — for a glob target, the winning individual file
+     *  currently being read, which may change across rotations without
+     *  changing the source id). */
+    targetPath: string;
+  };
+}
+
+/**
+ * One matched project-root detector (docs/specs/003-phase-3-auto-
+ * discovery.md § API contract; phase-3-auto-discovery.md § 3.1's fingerprint
+ * table). Pushed via the WS `discovery` message and `GET /api/discovery`.
+ */
+export interface DetectedFramework {
+  /** Matches the detector table in phase-3-auto-discovery.md § 3.1. */
+  detector: "laravel" | "symfony" | "nextjs" | "go" | "rails" | "django" | "wordpress";
+
+  /** Display name, e.g. "Next.js", "Go". */
+  label: string;
+
+  /** False for a detector whose fingerprint matched but which has no
+   *  default file target (nextjs, go, django per the phase doc's table). */
+  hasFileTarget: boolean;
+
+  /** Guidance copy, present only when hasFileTarget is false. */
+  note: string | null;
 }
 
 /**
@@ -123,7 +181,8 @@ export type ServerToClientMessage =
   | { type: "sourceState"; id: string; state: SourceState; detail?: string | null }
   | { type: "dropped"; count: number }
   | { type: "cleared" }
-  | { type: "dockerStatus"; status: DockerStatus; detail: string | null };
+  | { type: "dockerStatus"; status: DockerStatus; detail: string | null }
+  | { type: "discovery"; frameworks: DetectedFramework[] };
 
 export type ClientToServerMessage =
   | { type: "subscribe"; sourceIds: string[] }

@@ -31,15 +31,34 @@ export function setupWebSocketServer(server, state) {
 }
 function onConnection(ws, state) {
     const conn = state.broadcaster.addClient(ws);
+    // Local-source subscription is per-connection, not server-global (unlike
+    // Docker) — a local file's bytes are always fully ingested regardless of
+    // any client's interest, so the registry's `subscribed` flag only seeds
+    // *this* connection's starting delivery filter. Every fresh connection
+    // also starts unsubscribed from any `local.scope: "environment"` source
+    // regardless of its registry `subscribed` value (docs/specs/003-phase-3-
+    // auto-discovery.md § API contract "Exception, stated explicitly...").
+    for (const source of state.sources.list()) {
+        if (source.kind !== "local")
+            continue;
+        if (!source.subscribed || source.local?.origin === "environment") {
+            conn.excludedSourceIds.add(source.id);
+        }
+    }
     // Replay-on-connect, in order: buffered ring buffer contents, then the
     // current source list, then (if Docker is enabled) the current daemon
-    // connectivity status, then live traffic (handled by future broadcasts).
-    // See docs/specs/002-phase-2-docker.md § "WS connection sequence".
+    // connectivity status, then (if discovery is enabled) the fingerprinting
+    // result, then live traffic (handled by future broadcasts). See
+    // docs/specs/002-phase-2-docker.md and docs/specs/003-phase-3-auto-
+    // discovery.md § "WS connection sequence".
     state.broadcaster.sendReplay(conn, state.ringBuffer.all());
     state.broadcaster.sendSources(conn, state.sources.list());
     if (state.config.docker.enabled ?? true) {
         const { status, detail } = state.docker.getStatus();
         state.broadcaster.sendDockerStatus(conn, status, detail);
+    }
+    if (state.discovery.enabled) {
+        state.broadcaster.sendDiscovery(conn, state.discovery.frameworks);
     }
     ws.on("message", (data) => {
         let message;

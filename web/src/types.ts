@@ -34,26 +34,39 @@ export interface TraceRiverLog {
   multiline: boolean;
 }
 
+/** "pending" added by spec 003 § API contract — produced only by
+ *  `kind: "local"` sources whose target file doesn't exist yet. Docker and
+ *  file-upload sources never use it; their existing three-value lifecycles
+ *  are unchanged. */
+export type SourceState = "live" | "stopped" | "error" | "pending";
+
 /** Phase-1 generic SourceDescriptor shape (spec 001 § API contract),
- *  extended by spec 002 § API contract with the optional `docker` field. */
+ *  extended by spec 002 § API contract with the optional `docker` field, and
+ *  by spec 003 § API contract with the optional `local` field + the
+ *  `"pending"` state value. */
 export interface SourceDescriptor {
   /** Namespaced id, matches TraceRiverLog.source exactly, e.g. "file:dump.log". */
   id: string;
-  /** Phase 1 only ever produces "file"; phase 2 adds "docker"; "local" reserved for phase 3. */
+  /** Phase 1 only ever produces "file"; phase 2 adds "docker"; phase 3 activates "local". */
   kind: "file" | "docker" | "local";
   /** Display name, e.g. "dump.log". */
   label: string;
   /** Checkbox state. For "docker" sources this is server-global state, shared
    *  across every connected tab (spec 002 § Interaction specs — Decision 5),
-   *  not a per-connection delivery flag as it is for files. */
+   *  not a per-connection delivery flag as it is for files and `kind: "local"`
+   *  sources (spec 003 § API contract — local subscription is per-connection,
+   *  like files, with one carve-out: `local.origin === "environment"` sources
+   *  start unsubscribed on every fresh connection). */
   subscribed: boolean;
   /** Toggle state — client-side only, purely filters rendering. */
   visible: boolean;
   /** Authoritative total as of this message. */
   entryCount: number;
-  /** "live" while streaming/parsing; "stopped" once complete; "error" if failed. */
-  state: "live" | "stopped" | "error";
-  /** Human-readable detail for "error" (and optionally "stopped") states. */
+  /** "live" while streaming/parsing; "stopped" once complete/disappeared;
+   *  "error" if failed; "pending" (local sources only) while waiting for the
+   *  target file to be created. */
+  state: SourceState;
+  /** Human-readable detail for "error" (and optionally "stopped"/"pending") states. */
   detail: string | null;
   /** Epoch ms — sidebar sort order (oldest first). */
   createdAt: number;
@@ -66,20 +79,48 @@ export interface SourceDescriptor {
     composeService: string | null;
     inCurrentProject: boolean;
   };
+  /** Present only when kind === "local" (spec 003 § API contract). Drives
+   *  sidebar section placement (Files vs Environment) and the row tooltip. */
+  local?: {
+    /** "project"/"config" render in Files; "environment" renders in Environment. */
+    origin: "project" | "environment" | "config";
+    /** Matched detector name, e.g. "laravel", "herd" — null for a bespoke
+     *  traceriver.json watch entry with no matching detector. */
+    detector: string | null;
+    /** Resolved absolute path this source tails. */
+    targetPath: string;
+  };
 }
 
 /** Docker daemon connectivity, mirrored WS-push + `GET /api/docker/status`
  *  (spec 002 § API contract). */
 export type DockerStatus = "not_installed" | "not_running" | "permission_denied" | "connected";
 
-/** Server -> client WS message shapes (architecture.md + spec 001/002 extensions). */
+/** A fingerprint match from server-startup discovery (spec 003 § API
+ *  contract). Every matched detector appears here, including ones with
+ *  `hasFileTarget: true` (whose `SourceDescriptor` row already covers the
+ *  UI — this array entry exists for completeness / phase 4). */
+export interface DetectedFramework {
+  detector: "laravel" | "symfony" | "nextjs" | "go" | "rails" | "django" | "wordpress";
+  /** Display name, e.g. "Next.js", "Go". */
+  label: string;
+  /** False for a detector matched but with no default file target
+   *  (nextjs/go/django per the phase doc) — drives the Files-section
+   *  no-file-target informational note. */
+  hasFileTarget: boolean;
+  /** Guidance copy, present only when hasFileTarget is false. */
+  note: string | null;
+}
+
+/** Server -> client WS message shapes (architecture.md + spec 001/002/003 extensions). */
 export type ServerMessage =
   | { type: "entries"; entries: TraceRiverLog[] }
   | { type: "sources"; sources: SourceDescriptor[] }
-  | { type: "sourceState"; id: string; state: SourceDescriptor["state"]; detail?: string | null }
+  | { type: "sourceState"; id: string; state: SourceState; detail?: string | null }
   | { type: "dropped"; count: number }
   | { type: "cleared" }
-  | { type: "dockerStatus"; status: DockerStatus; detail: string | null };
+  | { type: "dockerStatus"; status: DockerStatus; detail: string | null }
+  | { type: "discovery"; frameworks: DetectedFramework[] };
 
 /** Client -> server WS message shapes. */
 export type ClientMessage =

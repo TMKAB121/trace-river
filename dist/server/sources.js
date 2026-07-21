@@ -12,6 +12,7 @@ export class SourceRegistry {
             detail: opts.detail ?? null,
             createdAt: Date.now(),
             docker: opts.docker,
+            local: opts.local,
         };
         this.sources.set(id, descriptor);
         return descriptor;
@@ -39,6 +40,16 @@ export class SourceRegistry {
         if (!source)
             return undefined;
         source.docker = docker;
+        return source;
+    }
+    /** Updates a local source's tooltip/section metadata (e.g. the "winning"
+     *  file's path after a glob-target rotation) — docs/specs/003-phase-3-
+     *  auto-discovery.md § API contract. */
+    updateLocalMeta(id, local) {
+        const source = this.sources.get(id);
+        if (!source)
+            return undefined;
+        source.local = local;
         return source;
     }
     get(id) {

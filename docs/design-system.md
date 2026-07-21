@@ -170,9 +170,15 @@ labels) — not just log content — matching the concept art.
 ## Iconography
 
 **No icon library is on the dependency allowlist.** All icons (docker whale
-mark, generic file, cloud-upload, magnifier, trash, pause/play, chevron) are
-hand-authored inline SVG at 16–20px, single-color, using `currentColor` so
-they inherit the token color of their context (e.g. a level-colored source
-icon isn't a thing — icons are always neutral `--color-text-primary` or
-`--color-text-muted`; only text/edges/chips carry level color). This requires
-no new dependency.
+mark, generic file, cloud-upload, magnifier, trash, pause/play, chevron,
+info) are hand-authored inline SVG at 16–20px, single-color, using
+`currentColor` so they inherit the token color of their context (e.g. a
+level-colored source icon isn't a thing — icons are always neutral
+`--color-text-primary` or `--color-text-muted`; only text/edges/chips carry
+level color). This requires no new dependency.
+
+`info` (circled "i", `IconInfo`) was added for
+[spec 003](specs/003-phase-3-auto-discovery.md)'s no-file-target framework
+notices (e.g. "Next.js detected — output is on stdout…") — neutral
+`--color-text-muted`, matching the rest of the set; no new color/size token
+needed.

@@ -11,6 +11,7 @@ import { TraceRiverSocket, type ConnectionState } from "../api/ws";
 import { getReplay, getStatus, uploadFile as restUploadFile, ApiError } from "../api/rest";
 import {
   LOG_LEVELS,
+  type DetectedFramework,
   type DockerStatus,
   type LogLevel,
   type ServerMessage,
@@ -45,6 +46,13 @@ const DOCKER_FAILURE_STATUSES: DockerStatus[] = ["not_installed", "not_running",
  *  finding out" from "disabled," so the sidebar rendered phase‑1's flat
  *  fallback instead of the spec'd sectioned "Checking Docker…" state. */
 const DOCKER_SETTLE_GUARD_MS = 400;
+
+/** Same "absence-means-disabled" guard, applied to spec 003's `discovery`
+ *  WS message (§ WS connection sequence: sent right after `dockerStatus`,
+ *  within the same connection handler / network round trip). Mirrors
+ *  `DOCKER_SETTLE_GUARD_MS`'s rationale exactly — long enough to absorb
+ *  normal jitter, not to wait out anything user-perceptible. */
+const DISCOVERY_SETTLE_GUARD_MS = 400;
 
 function dockerStatusAnnouncement(status: DockerStatus): string {
   switch (status) {
@@ -118,6 +126,16 @@ export interface AppState {
    *  `dockerAllContainersDefault`, then left alone once the user toggles it. */
   showAllContainers: boolean;
   showAllContainersTouched: boolean;
+  /** Populated by the WS `discovery` message (spec 003 § API contract) —
+   *  empty until it arrives (indistinguishable, by design, from "discovery
+   *  ran and found nothing"; see `useFrameworks`). */
+  frameworks: DetectedFramework[];
+  /** Tri-state read of whether discovery is enabled server-side, inferred
+   *  the same way as `dockerAvailability`: "unknown" until either a
+   *  `discovery` message has been seen or the post-connect settle guard
+   *  gives up waiting for one (see `DISCOVERY_SETTLE_GUARD_MS`); "enabled"/
+   *  "disabled" are terminal for the life of the page. */
+  discoveryAvailability: "unknown" | "enabled" | "disabled";
 }
 
 const initialState: AppState = {
@@ -142,6 +160,8 @@ const initialState: AppState = {
   dismissedDockerStatuses: new Set(),
   showAllContainers: false,
   showAllContainersTouched: false,
+  frameworks: [],
+  discoveryAvailability: "unknown",
 };
 
 type Action =
@@ -172,7 +192,9 @@ type Action =
   | { type: "SET_SHOW_ALL_CONTAINERS_DEFAULT"; value: boolean }
   | { type: "TOGGLE_SHOW_ALL_CONTAINERS" }
   | { type: "DISMISS_DOCKER_STATUS_CARD"; status: DockerStatus }
-  | { type: "SETTLE_DOCKER_AVAILABILITY"; value: "enabled" | "disabled" };
+  | { type: "SETTLE_DOCKER_AVAILABILITY"; value: "enabled" | "disabled" }
+  | { type: "SET_DISCOVERY"; frameworks: DetectedFramework[] }
+  | { type: "SETTLE_DISCOVERY_AVAILABILITY"; value: "enabled" | "disabled" };
 
 function sortedSourceOrder(sources: Record<string, SourceDescriptor>): string[] {
   return Object.values(sources)
@@ -411,6 +433,13 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, dismissedDockerStatuses: next };
     }
 
+    case "SET_DISCOVERY":
+      return { ...state, frameworks: action.frameworks, discoveryAvailability: "enabled" };
+
+    case "SETTLE_DISCOVERY_AVAILABILITY":
+      if (state.discoveryAvailability !== "unknown") return state;
+      return { ...state, discoveryAvailability: action.value };
+
     default:
       return state;
   }
@@ -475,6 +504,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // Finding 2 / see DOCKER_SETTLE_GUARD_MS).
   const dockerAvailabilityRef = useRef<AppState["dockerAvailability"]>("unknown");
   const dockerSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors state.discoveryAvailability — same purpose as the docker refs
+  // above, applied to spec 003's `discovery` message settle guard.
+  const discoveryAvailabilityRef = useRef<AppState["discoveryAvailability"]>("unknown");
+  const discoverySettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     lastIdRef.current = state.entries.length > 0 ? state.entries[state.entries.length - 1].id : -Infinity;
@@ -493,6 +526,14 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       dockerSettleTimerRef.current = null;
     }
   }, [state.dockerAvailability]);
+
+  useEffect(() => {
+    discoveryAvailabilityRef.current = state.discoveryAvailability;
+    if (state.discoveryAvailability !== "unknown" && discoverySettleTimerRef.current) {
+      clearTimeout(discoverySettleTimerRef.current);
+      discoverySettleTimerRef.current = null;
+    }
+  }, [state.discoveryAvailability]);
 
   // --- WS connection lifecycle -------------------------------------------
   useEffect(() => {
@@ -542,6 +583,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             dispatch({ type: "SETTLE_DOCKER_AVAILABILITY", value: "disabled" });
           }, DOCKER_SETTLE_GUARD_MS);
         }
+        // Same guard, applied to spec 003's `discovery` message — its
+        // absence for the life of the connection means `discovery.enabled:
+        // false` server-side (§ WS connection sequence).
+        if (connState === "connected" && discoveryAvailabilityRef.current === "unknown") {
+          if (discoverySettleTimerRef.current) clearTimeout(discoverySettleTimerRef.current);
+          discoverySettleTimerRef.current = setTimeout(() => {
+            discoverySettleTimerRef.current = null;
+            dispatch({ type: "SETTLE_DISCOVERY_AVAILABILITY", value: "disabled" });
+          }, DISCOVERY_SETTLE_GUARD_MS);
+        }
       },
       onMessage: (msg: ServerMessage) => {
         switch (msg.type) {
@@ -562,6 +613,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
                 dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} stopped.` });
               } else if (msg.state === "live" && prior.state === "stopped") {
                 dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} restarted.` });
+              }
+            }
+            // Spec 003 § Accessibility — a *subscribed* local source's
+            // pending->live (first-ever appearance) or stopped->live (file
+            // reappearing) transition, and its live->stopped transition, are
+            // announced; unsubscribed sources' lifecycle is never announced.
+            if (prior && prior.kind === "local" && prior.subscribed && prior.state !== msg.state) {
+              if (msg.state === "live" && (prior.state === "pending" || prior.state === "stopped")) {
+                dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} started streaming.` });
+              } else if (msg.state === "stopped" && prior.state === "live") {
+                dispatch({ type: "SET_ANNOUNCEMENT", message: `${prior.label} stopped — file not found.` });
               }
             }
             break;
@@ -588,6 +650,12 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
             }
             break;
           }
+          case "discovery":
+            // Sent once, at connect time, never rebroadcast mid-session
+            // (spec 003 § WS connection sequence) — no announcement/toast on
+            // arrival (spec 003 Decision 6: silence is correct here too).
+            dispatch({ type: "SET_DISCOVERY", frameworks: msg.frameworks });
+            break;
           case "dropped":
             dispatch({ type: "SHOW_TOAST", message: `${msg.count} entries dropped — resyncing…` });
             dispatch({ type: "SET_ANNOUNCEMENT", message: `${msg.count} entries dropped, resyncing` });
@@ -612,6 +680,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       if (dockerSettleTimerRef.current) {
         clearTimeout(dockerSettleTimerRef.current);
         dockerSettleTimerRef.current = null;
+      }
+      if (discoverySettleTimerRef.current) {
+        clearTimeout(discoverySettleTimerRef.current);
+        discoverySettleTimerRef.current = null;
       }
     };
   }, []);
@@ -818,7 +890,43 @@ export function useContainerSources(): SourceDescriptor[] {
   return useMemo(() => ordered.filter((s) => s.kind === "docker"), [ordered]);
 }
 
+/** "Files" sub-section sources (spec 003 § Components & states): uploaded
+ *  files plus `kind: "local"` sources whose `local.scope` is "project" or
+ *  "config" — everything except environment-scope local sources. */
 export function useFileSources(): SourceDescriptor[] {
   const ordered = useOrderedSources();
-  return useMemo(() => ordered.filter((s) => s.kind === "file"), [ordered]);
+  return useMemo(
+    () => ordered.filter((s) => s.kind === "file" || (s.kind === "local" && s.local?.origin !== "environment")),
+    [ordered],
+  );
+}
+
+/** "Environment" sub-section sources (spec 003 § Components & states):
+ *  `kind: "local"` sources whose `local.scope` is "environment". */
+export function useEnvironmentSources(): SourceDescriptor[] {
+  const ordered = useOrderedSources();
+  return useMemo(() => ordered.filter((s) => s.kind === "local" && s.local?.origin === "environment"), [ordered]);
+}
+
+/** The most recent `discovery` WS message's `frameworks` array — empty
+ *  until it arrives, indistinguishable by design from "discovery ran and
+ *  found nothing" (spec 003 § WS connection sequence: presence of the
+ *  message, not the array's length, signals "discovery is on", and this
+ *  frontend doesn't need to draw that distinction anywhere — see
+ *  `useDiscoveryAvailability` for the one place it does). */
+export function useFrameworks(): DetectedFramework[] {
+  const { state } = useAppStore();
+  return state.frameworks;
+}
+
+/** Tri-state read of `state.discoveryAvailability` — see `AppState` and the
+ *  reducer's `SET_DISCOVERY`/`SETTLE_DISCOVERY_AVAILABILITY` handling.
+ *  Consumed only by the sidebar's flat-vs-sectioned gate (spec 003 §
+ *  Components & states — "Environment renders only when discovery.enabled
+ *  is true and at least one environment-scope source was discovered" is
+ *  otherwise fully derivable from `useEnvironmentSources` alone, since an
+ *  environment-scope source can only exist when discovery is enabled). */
+export function useDiscoveryAvailability(): AppState["discoveryAvailability"] {
+  const { state } = useAppStore();
+  return state.discoveryAvailability;
 }

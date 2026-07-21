@@ -45,7 +45,6 @@ export function resolveConfig(flags, cwd = process.cwd()) {
     else if (flags.config) {
         throw new Error(`Config file not found: ${configPath}`);
     }
-    void dirname; // reserved for future relative-path resolution of `watch` entries
     const port = flags.port ?? fileConfig.port ?? DEFAULT_PORT;
     const buffer = flags.buffer ?? fileConfig.buffer ?? DEFAULT_BUFFER;
     const open = flags.open ?? fileConfig.open ?? true;
@@ -58,14 +57,25 @@ export function resolveConfig(flags, cwd = process.cwd()) {
         include: fileConfig.docker?.include ?? [],
         exclude: fileConfig.docker?.exclude ?? [],
     };
+    // discovery.* is fully resolved here (this phase actually acts on it —
+    // src/discovery/) so a plain literal `{}` elsewhere in the codebase (test
+    // fixtures built without going through resolveConfig()) is never
+    // mistaken for "discovery on" — only this function's explicit `?? true`
+    // default does that. See docs/specs/003-phase-3-auto-discovery.md § API
+    // contract / src/discovery/index.ts.
+    const discovery = {
+        enabled: fileConfig.discovery?.enabled ?? true,
+        disable: fileConfig.discovery?.disable ?? [],
+    };
     return {
         port,
         buffer,
         open,
         configPath: resolvedConfigPath,
+        configDir: resolvedConfigPath ? dirname(resolvedConfigPath) : cwd,
         watch: fileConfig.watch ?? [],
         docker,
-        discovery: fileConfig.discovery ?? {},
+        discovery,
         parsers: fileConfig.parsers ?? [],
     };
 }
