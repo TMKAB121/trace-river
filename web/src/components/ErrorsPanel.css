@@ -1,0 +1,11 @@
+.errors-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.errors-panel__list {
+  display: flex;
+  flex-direction: column;
+}

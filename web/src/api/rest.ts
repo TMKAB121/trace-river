@@ -42,6 +42,14 @@ export function getReplay(after: number): Promise<{ entries: TraceRiverLog[] }> 
   return apiFetch<{ entries: TraceRiverLog[] }>(`/api/replay?after=${encodeURIComponent(after)}`);
 }
 
+/** Server-assembled, redacted AI debugging prompt for one error group (docs/
+ *  specs/004-phase-4-error-intelligence.md § API contract). Rejects with
+ *  `ApiError(404, { error: "not_found" })` if the fingerprint isn't
+ *  currently tracked (never existed, or evicted from the 500-cap LRU). */
+export function getErrorPrompt(fingerprint: string): Promise<{ prompt: string }> {
+  return apiFetch<{ prompt: string }>(`/api/errors/${encodeURIComponent(fingerprint)}/prompt`);
+}
+
 export interface UploadHandle {
   xhr: XMLHttpRequest;
   promise: Promise<{ source: SourceDescriptor }>;

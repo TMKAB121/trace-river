@@ -1,0 +1,35 @@
+.spiking-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--color-level-error);
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  animation: spiking-pulse var(--motion-pulse);
+}
+
+@keyframes spiking-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Static, fully legible, un-animated — no information is carried by the
+   pulse itself, only by the icon + "SPIKING" text (docs/design-system.md §
+   Motion — --motion-pulse). */
+@media (prefers-reduced-motion: reduce) {
+  .spiking-badge {
+    animation: none;
+  }
+}

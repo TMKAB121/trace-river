@@ -1,6 +1,7 @@
 import type { SourceDescriptor } from "../types";
-import { useAppStore } from "../store/store";
+import { useAppStore, useSourceErrorCount, useSourceSpiking } from "../store/store";
 import { IconDocker, IconFile } from "./icons";
+import SpikingBadge from "./SpikingBadge";
 import "./SourceRow.css";
 
 function KindIcon({ kind }: { kind: SourceDescriptor["kind"] }) {
@@ -60,6 +61,8 @@ const STATE_LABEL_TEXT: Record<"pending" | "stopped" | "error", string> = {
 
 export default function SourceRow({ source }: { source: SourceDescriptor }) {
   const { actions } = useAppStore();
+  const errorCount = useSourceErrorCount(source.id);
+  const spiking = useSourceSpiking(source.id);
 
   const dimmed = !source.subscribed;
   // State label is scoped to docker and local sources (spec 002 §
@@ -88,6 +91,17 @@ export default function SourceRow({ source }: { source: SourceDescriptor }) {
         </span>
         <span className="source-row__label">{source.label}</span>
         <span className="source-row__count">{source.entryCount}</span>
+        {errorCount > 0 && (
+          <button
+            type="button"
+            className="source-row__error-badge"
+            aria-label={`${errorCount} errors from ${source.id} — filter stream to these`}
+            onClick={() => actions.setScopeSource(source.id)}
+          >
+            {errorCount}
+          </button>
+        )}
+        {spiking && <SpikingBadge />}
         <button
           type="button"
           role="switch"

@@ -17,6 +17,7 @@ import type { Readable } from "node:stream";
 import type { ContainerInfo } from "dockerode";
 import { DockerClient } from "./docker-client.js";
 import { SourcePipeline } from "../parsers/pipeline.js";
+import { ingestParsedEntries } from "../server/ingest-entries.js";
 import type { AppState } from "../server/app-state.js";
 import type { DockerStatus, SourceDescriptor, TraceRiverLogInput } from "../shared/types.js";
 
@@ -309,10 +310,10 @@ export class DockerManager {
         return;
       }
 
-      const onEntries = (entries: TraceRiverLogInput[]) => {
-        const inserted = entries.map((e) => this.state.ringBuffer.push(e));
-        this.state.sources.incrementCount(sourceId, inserted.length);
-        this.state.broadcaster.enqueueEntries(inserted);
+      // Bound per-pipeline (not shared) since stdout/stderr get independent
+      // SourcePipeline instances below and can lock onto different parsers.
+      const makeOnEntries = (pipeline: SourcePipeline) => (entries: TraceRiverLogInput[]) => {
+        ingestParsedEntries(this.state, sourceId, entries, pipeline.getLockedParserName());
       };
 
       // Tracks the newest Docker per-line timestamp actually read off this
@@ -332,7 +333,7 @@ export class DockerManager {
         // plain text; demuxing it would corrupt it (docs/phases/
         // phase-2-docker.md § 2.3).
         const pipeline = new SourcePipeline({ sourceId, mode: "live" });
-        pipeline.on("entries", onEntries);
+        pipeline.on("entries", makeOnEntries(pipeline));
         const feeder = new DockerLineFeeder(pipeline, recordTimestamp);
         rawStream.on("data", (chunk: Buffer) => feeder.push(chunk));
         rawStream.on("close", () => feeder.dispose());
@@ -344,8 +345,8 @@ export class DockerManager {
         // itself (docs/phases/phase-2-docker.md § 2.3).
         const stdoutPipeline = new SourcePipeline({ sourceId, mode: "live" });
         const stderrPipeline = new SourcePipeline({ sourceId, mode: "live", levelFloor: "WARN" });
-        stdoutPipeline.on("entries", onEntries);
-        stderrPipeline.on("entries", onEntries);
+        stdoutPipeline.on("entries", makeOnEntries(stdoutPipeline));
+        stderrPipeline.on("entries", makeOnEntries(stderrPipeline));
 
         const stdoutFeeder = new DockerLineFeeder(stdoutPipeline, recordTimestamp);
         const stderrFeeder = new DockerLineFeeder(stderrPipeline, recordTimestamp);

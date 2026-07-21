@@ -20,6 +20,7 @@ import { registerStatusRoute } from "./routes/status.js";
 import { registerReplayRoute } from "./routes/replay.js";
 import { registerDockerStatusRoute } from "./routes/docker-status.js";
 import { registerDiscoveryRoute } from "./routes/discovery.js";
+import { registerErrorsRoute } from "./routes/errors.js";
 import { UPLOAD_HARD_CAP_BYTES } from "../ingest/upload.js";
 import { DEFAULT_BUFFER, DEFAULT_PORT } from "../shared/config.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -53,7 +54,11 @@ export async function startServer(options = {}) {
             parsers: [],
         };
     const state = createAppState({ token, port: desiredPort, config, version, cwd: options.cwd });
-    state.broadcaster.start();
+    // Error-groups recompute/broadcast is driven from the same ~75ms flush
+    // tick as `entries` (docs/specs/004-phase-4-error-intelligence.md § API
+    // contract — Cadence), so a purely time-driven change (a spike clearing
+    // with no new occurrence) still reaches clients without a separate timer.
+    state.broadcaster.start(() => state.errorGroups.tick());
     let port = desiredPort;
     let app = null;
     let lastError = null;
@@ -149,6 +154,7 @@ function buildApp(state, webDist) {
     registerReplayRoute(app, state);
     registerDockerStatusRoute(app, state);
     registerDiscoveryRoute(app, state);
+    registerErrorsRoute(app, state);
     if (existsSync(webDist)) {
         app.register(fastifyStatic, { root: webDist });
     }

@@ -11,9 +11,11 @@ detail lives in [`docs/project/features/`](features/).
 **Phase 1 — Core Console** (see
 [`features/001-phase-1-core-console.md`](features/001-phase-1-core-console.md)),
 **Phase 2 — Docker Streams** (see
-[`features/002-phase-2-docker.md`](features/002-phase-2-docker.md)), and
+[`features/002-phase-2-docker.md`](features/002-phase-2-docker.md)),
 **Phase 3 — Auto-Discovery** (see
-[`features/003-phase-3-auto-discovery.md`](features/003-phase-3-auto-discovery.md)).
+[`features/003-phase-3-auto-discovery.md`](features/003-phase-3-auto-discovery.md)),
+and **Phase 4 — Error Intelligence** (see
+[`features/004-phase-4-error-intelligence.md`](features/004-phase-4-error-intelligence.md)).
 Everything described below reflects that shipped state; nothing here is
 aspirational.
 
@@ -119,6 +121,42 @@ TraceRiver runs as a single Node.js process, started by the CLI
   `jsonl` → `raw` detection chain, confidence-scored, sticky per source) →
   `normalize.ts` (level/timestamp normalization). Wired together in
   `pipeline.ts`.
+- **Error intelligence** (`src/errors/`, `src/server/ingest-entries.ts`,
+  phase 4) — `ingest-entries.ts` is the single choke point all three ingest
+  adapters (upload, Docker, tail) now route parsed entries through before
+  they reach the ring buffer, so fingerprint-attach happens exactly once,
+  in the same tick as ingestion, regardless of source kind. For every
+  `ERROR`/`FATAL` entry: `normalize-text.ts` replaces variable segments
+  (timestamps, UUIDs/hex/long ints, quoted values, memory
+  addresses/ports/durations, file-path prefixes) with placeholders, then
+  `fingerprint.ts` hashes `source id + normalized message + normalized top
+  stack frame` (sha256) — the literal source id, not just its kind, so two
+  same-message errors on two different sources never merge. `error-store.ts`
+  is an in-memory `ErrorGroupStore`, keyed by fingerprint, independent of
+  the ring buffer: capped at 500 groups (LRU by `lastSeen`), each tracking
+  `count`/`firstSeen`/`lastSeen`, up to 10 `sampleEntryIds` (the oldest
+  still-resolvable occurrence pinned, plus up to 9 most-recent, rolling), a
+  30-minute per-minute occurrence histogram, and a `spiking` flag
+  (current-minute rate > 5× trailing average **and** ≥ 10/min absolute, no
+  hysteresis/cooldown — recomputed on every occurrence and at least once per
+  broadcast tick). Group metadata (`count`/`firstSeen`/`lastSeen`) survives
+  raw-entry eviction from the ring buffer; `rawEntriesEvicted` goes sticky
+  `true` the first time any tracked sample id ages out. `redact.ts` scrubs
+  secret-looking values (`Authorization: Bearer`, `password=`/`passwd=`/
+  `pwd=`, AWS-style access-key ids, generic `api_key`/`secret`/`token`
+  key-value pairs) to `<redacted>` — distinct from the `⟨…⟩` grouping
+  placeholders, which mean "generalized for matching," not "secret."
+  `prompt.ts` assembles the markdown AI-debugging prompt (error summary,
+  latest resolvable sample's stack trace, environment metadata from Docker
+  inspect/discovery, the 15 ring-buffer entries — across every source —
+  immediately before the group's *first* occurrence, and a deterministic
+  occurrence-pattern summary), re-running both the placeholder and secret
+  passes over the fully assembled string as its last step before returning.
+  Served via `src/server/routes/errors.ts` (`GET /api/errors`,
+  `GET /api/errors/:fingerprint/prompt`) and pushed to clients as
+  `{ type: "errorGroups", groups }` (see below). Constants (group cap,
+  sample cap, histogram window, spike thresholds, prompt context-line count)
+  live in one object, `src/errors/config.ts` — not user-configurable in v1.
 - **Ring buffer + broadcaster** (`src/server/ring-buffer.ts`,
   `broadcaster.ts`) — fixed-capacity circular buffer (default 50,000
   entries, `--buffer` overridable); the broadcaster batches WS sends
@@ -130,17 +168,31 @@ TraceRiver runs as a single Node.js process, started by the CLI
   `kind: "local"` sources are per-connection subscriptions by design (unlike
   Docker's server-global model), so each connection's own
   `excludedSourceIds` must win over the shared registry default in every
-  broadcast, not just at connect time.
+  broadcast, not just at connect time. As of phase 4, the same ~75 ms batch
+  also carries `{ type: "errorGroups", groups }` — always the full current
+  group list (≤500), unconditional (no config flag, unlike `dockerStatus`/
+  `discovery`), appended as the last step of the WS connect sequence and
+  resent live on every group create/update.
 - **Frontend** (`web/`) — Vite + React 19 SPA. `web/src/api/` (auth, REST,
   WS client), `web/src/store/store.tsx` (the client-side entry store,
   filtering, freeze/pin state, the tri-state `dockerAvailability` reducer,
-  and, as of phase 3, `discoveryAvailability`/`frameworks`/environment-source
-  selectors), `web/src/components/` (Sidebar, TopBar, StreamPanel/Row/
-  ExpandedPanel, drag-and-drop, toasts, banners, `ContainersSection`/
-  `FilesSection`/`DockerStatusCard` as of phase 2, and `EnvironmentSection`
-  plus `FilesSection`'s no-file-target framework notes as of phase 3),
-  `web/src/styles/tokens.css` (the terminal-chic design-token mirror of
-  `docs/design-system.md`, extended this phase with `IconInfo`).
+  as of phase 3 `discoveryAvailability`/`frameworks`/environment-source
+  selectors, and, as of phase 4, `errorGroups` state, the `errorsOnly`/
+  `scopeSourceId` stream filters, `view`/`errorsSort`, and the AI-prompt
+  modal's open/loading/loaded/error state), `web/src/components/` (Sidebar,
+  TopBar, StreamPanel/Row/ExpandedPanel, drag-and-drop, toasts, banners,
+  `ContainersSection`/`FilesSection`/`DockerStatusCard` as of phase 2,
+  `EnvironmentSection` plus `FilesSection`'s no-file-target framework notes
+  as of phase 3, and, as of phase 4, `ViewSwitcher`, `ErrorsPanel`/
+  `ErrorGroupCard`/`SampleRow`/`Sparkline`/`SpikingBadge`/
+  `ErrorsEmptyState`/`ErrorsSortControl`, `ErrorsOnlyToggle`/
+  `LatestErrorButton`/`ScopeChip` in the top/filter row, and the app's first
+  modal, `AIPromptModal`, with its own `useFocusTrap` hook and the global
+  `e`-key handler in `useLatestErrorShortcut`), `web/src/styles/tokens.css`
+  (the terminal-chic design-token mirror of `docs/design-system.md`,
+  extended in phase 3 with `IconInfo` and in phase 4 with `IconWarning`/
+  `IconBolt`/`IconSparkle`, `--motion-pulse`, `--z-modal-overlay`/
+  `--z-modal`, `--sparkline-width`/`-height`, `--modal-max-width`).
 
 ## Data flow
 
@@ -153,11 +205,17 @@ local file --chokidar/tail.ts-->     ->   splitter -> aggregator -> format
                                        TraceRiverLog <---------
                                              |
                                              v
+                                    ingest-entries.ts (fingerprint-attach,
+                                       ERROR/FATAL only) -> error-store.ts
+                                             |                    |
+                                             v                    v
                                       ring buffer -> WS broadcaster
+                                        (entries)      (entries, errorGroups)
                                                            |
                                                            v
                                                      browser SPA (store,
-                                                     virtualized stream)
+                                                     virtualized stream,
+                                                     Errors panel)
 ```
 
 All three ingest adapters (uploaded files, live Docker containers, and, as
@@ -167,7 +225,13 @@ regardless of source kind. The `SourceDescriptor` shape was already generic
 enough that phase 1 built the sidebar/stream against it without rework, and
 phases 2 and 3 both confirm that held for `kind: "docker"` and
 `kind: "local"` respectively — the third, previously-reserved `SourceKind`
-is now live.
+is now live. As of phase 4, every parsed `TraceRiverLog` also passes through
+`src/server/ingest-entries.ts` immediately before the ring buffer: an
+`ERROR`/`FATAL` entry gets its `fingerprint` attached and its group updated
+in `error-store.ts` in that same tick, so the entry that reaches the ring
+buffer/broadcaster and the group update that reaches `error-store.ts` are
+never out of sync — there is no separate, later pass that revisits an
+already-broadcast entry.
 
 ## Security model (as implemented)
 
@@ -184,6 +248,12 @@ is now live.
   `getEvents`, and a ping-based connectivity probe — no create/exec/remove
   call exists anywhere in the codebase.
 - No telemetry; nothing leaves the machine.
+- **AI prompt generation makes no network call, ever** (phase 4): prompt
+  assembly and redaction (`src/errors/prompt.ts`, `redact.ts`) are fully
+  server-local; the browser's only role is `GET
+  /api/errors/:fingerprint/prompt` (same-origin, token-authed, like every
+  other REST call) followed by a client-side clipboard write. No API key is
+  stored or accepted anywhere in v1.
 
 Full detail: [`docs/architecture.md` § Security model](../architecture.md#security-model).
 
@@ -191,21 +261,30 @@ Full detail: [`docs/architecture.md` § Security model](../architecture.md#secur
 
 `npm test` runs Vitest across `test/parsers/` (golden fixtures per format +
 chunk-boundary fuzz), `test/server/` (auth, ring buffer, replay/clear,
-subscribe, upload guardrails, port-zero handling), `test/docker/` (phase 2 —
-discovery/project-filtering, global subscribe/unsubscribe, TTY/non-TTY
-demux, restart/rename lifecycle, `docker.enabled: false` fallback, daemon
-status endpoints, a high-throughput load test; the suite `describe.skipIf`s
-itself on a host without a reachable Docker daemon), `test/discovery/`
-(phase 3 — zero-config Laravel tailing, rotation/truncation handling and
-manual-unsubscribe permanence, `watch` config resolution/dedupe,
-no-file-target framework notes, `discovery.disable`/`discovery.enabled:
-false`, environment-tier sources with `$HOME` fixture-injection so the suite
-never depends on a real Herd/Valet install, a scaled large-file-attach load
-test, and a concurrent-sources load test), and `test/e2e/` (a smoke test
+subscribe, upload guardrails, port-zero handling, and, as of phase 4, error
+REST/WS-sequence tests plus real-pipeline error-grouping criteria tests),
+`test/docker/` (phase 2 — discovery/project-filtering, global
+subscribe/unsubscribe, TTY/non-TTY demux, restart/rename lifecycle,
+`docker.enabled: false` fallback, daemon status endpoints, a high-throughput
+load test; the suite `describe.skipIf`s itself on a host without a reachable
+Docker daemon), `test/discovery/` (phase 3 — zero-config Laravel tailing,
+rotation/truncation handling and manual-unsubscribe permanence, `watch`
+config resolution/dedupe, no-file-target framework notes,
+`discovery.disable`/`discovery.enabled: false`, environment-tier sources
+with `$HOME` fixture-injection so the suite never depends on a real
+Herd/Valet install, a scaled large-file-attach load test, and a
+concurrent-sources load test), `test/errors/` (phase 4 — fingerprint golden
+corpus across Laravel/mysql/nginx/Node fixtures, per-rule
+placeholder-normalization unit coverage, `ErrorGroupStore` unit tests
+(grouping, 500-cap LRU eviction, sample pinning, eviction-survival,
+spike-compute/clear), prompt-assembly snapshot tests (redaction,
+cross-source context, eviction fallback text, deterministic
+occurrence-pattern text), and a client-side occurrence-pattern-text
+regression test added during the fix loop), and `test/e2e/` (a smoke test
 that starts the server programmatically and asserts the WS stream delivers
 parsed entries end-to-end, plus a memory/RSS test). Phase 1 shipped at
-60/60 tests passing; phase 2 shipped at 81/81; phase 3 shipped at 109/109
-(32 test files total).
+60/60 tests passing; phase 2 shipped at 81/81; phase 3 shipped at 109/109;
+phase 4 shipped at 199/199 (39 test files total).
 
 ## Known deviations / accepted tradeoffs
 
@@ -268,6 +347,31 @@ parsed entries end-to-end, plus a memory/RSS test). Phase 1 shipped at
   explicitly off-limits. These are verified by static code review against
   the spec's exact copy only; see the test plan's § Known limitations for
   detail.
+- **The Errors panel, AI Prompt Preview modal, sort control, and
+  scope-chip/source-badge click-through were verified by static code review
+  only, not rendered evidence** (phase 4) — the QA browser tool supports
+  navigation and static DOM/screenshot capture but no click, drag, or
+  keyboard scripting, so every phase-4 interaction that requires a click to
+  reach (Errors tab content, card expansion, sort toggling, the modal, the
+  stream row's sparkle-icon prompt entry point) was confirmed by reading the
+  component source against the spec's exact requirements rather than a
+  captured screenshot. Only two states — the default Stream view's sidebar
+  badges/SPIKING indicator and the disabled-empty-state view switcher — have
+  rendered evidence. Same tooling limitation documented for phases 1–3; see
+  [`docs/qa/test-plans/004-phase-4-error-intelligence.md`](../qa/test-plans/004-phase-4-error-intelligence.md).
+- **The nginx error-log timestamp format (`YYYY/MM/DD HH:mm:ss`, slash-
+  separated) isn't matched by the fingerprinting placeholder-normalization
+  rule** (`src/errors/normalize-text.ts`'s date/timestamp regexes only match
+  dash-separated `YYYY-MM-DD`) — found during QA's fingerprint-corpus
+  authoring, not filed as a defect (see the test plan's § Finding). In
+  practice this rarely bites: the CLF parser already strips the leading
+  `[timestamp] [level]` before `message` reaches fingerprinting, so a
+  CLF-parsed nginx line never carries the raw timestamp into the fingerprint
+  in the first place. It could only matter for a slash-dated line reaching
+  fingerprinting via the `raw` fallback parser, and the resulting failure
+  mode (a false split — two occurrences of the same error stay in separate
+  groups) is the spec's own explicitly-accepted, lower-severity failure mode
+  (a false *merge* is the one the algorithm is biased against).
 
 ## Roadmap
 

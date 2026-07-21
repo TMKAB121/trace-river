@@ -40,6 +40,13 @@ interface TraceRiverLog {
 
   /** True when body holds aggregated continuation lines. */
   multiline: boolean;
+
+  /**
+   * ErrorGroup fingerprint (phase 4). Non-null only for ERROR/FATAL entries,
+   * assigned at ingestion in the same tick as the entry itself — never as a
+   * later update to an already-broadcast entry. null for every other level.
+   */
+  fingerprint: string | null;
 }
 ```
 

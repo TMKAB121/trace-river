@@ -7,6 +7,7 @@
  */
 import type { Readable } from "node:stream";
 import { SourcePipeline } from "../parsers/pipeline.js";
+import { ingestParsedEntries } from "../server/ingest-entries.js";
 import type { AppState } from "../server/app-state.js";
 import type { SourceDescriptor, TraceRiverLogInput } from "../shared/types.js";
 
@@ -39,9 +40,7 @@ export async function ingestUpload(
 
   const pipeline = new SourcePipeline({ sourceId, mode: "file" });
   pipeline.on("entries", (entries: TraceRiverLogInput[]) => {
-    const inserted = entries.map((e) => state.ringBuffer.push(e));
-    state.sources.incrementCount(sourceId, inserted.length);
-    state.broadcaster.enqueueEntries(inserted);
+    ingestParsedEntries(state, sourceId, entries, pipeline.getLockedParserName());
   });
 
   try {

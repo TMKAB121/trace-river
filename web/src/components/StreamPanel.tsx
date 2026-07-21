@@ -60,6 +60,18 @@ export default function StreamPanel() {
     actions.setPinned(true);
   }, [virtualizer, visibleEntries.length, actions]);
 
+  // "Jump to latest error" (spec 004 § Interaction specs): the store sets
+  // scrollToEntryId + bumps scrollNonce; re-fires on every jump (even to the
+  // same id) since scrollNonce, not scrollToEntryId, is the effect's dep.
+  useEffect(() => {
+    if (state.scrollToEntryId === null) return;
+    const idx = visibleEntries.findIndex((e) => e.id === state.scrollToEntryId);
+    if (idx !== -1) {
+      virtualizer.scrollToIndex(idx, { align: "center" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.scrollNonce]);
+
   if (!hasSources) {
     return (
       <>

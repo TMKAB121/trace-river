@@ -136,3 +136,40 @@ export function IconArrowDown(props: IconProps) {
     </svg>
   );
 }
+
+/** Triangle + exclamation — spec 004 § Iconography. Decorative, always
+ *  paired with a visible text label/number (per-source error badge, Errors
+ *  tab, Errors Only toggle, Latest Error button). */
+export function IconWarning(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M10 3.2 17.3 16H2.7L10 3.2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M10 8.3v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <circle cx="10" cy="14.3" r="0.95" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Lightning bolt — spec 004 § Iconography. Used only inside the SPIKING
+ *  chip, always paired with the word "SPIKING". */
+export function IconBolt(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M11.2 2.5 4.8 11.3h4l-1 6.2 7.4-9.6h-4.2l1.2-5.4Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Four-point sparkle/diamond — spec 004 § Iconography. "Generate AI
+ *  Prompt", both entry points (Errors panel card + stream row expanded
+ *  panel). */
+export function IconSparkle(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path
+        d="M10 2.3c.45 3.35 1.15 5.1 2.2 6.15S14.85 10 18.2 10.45c-3.35.45-5.1 1.15-6.15 2.2S10.45 15.6 10 18.95c-.45-3.35-1.15-5.1-2.2-6.15S5.15 10.9 1.8 10.45c3.35-.45 5.1-1.15 6.15-2.2S9.55 5.65 10 2.3Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}

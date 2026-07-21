@@ -1,0 +1,21 @@
+.sparkline {
+  width: var(--sparkline-width);
+  height: var(--sparkline-height);
+  flex: 0 0 auto;
+  display: block;
+}
+
+.sparkline__line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.sparkline__line--error {
+  stroke: var(--color-level-error);
+}
+
+.sparkline__line--fatal {
+  stroke: var(--color-level-fatal);
+}
