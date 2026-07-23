@@ -66,6 +66,16 @@ client → server
 - **Client store**: mirrors the same cap. The virtualized list renders only visible rows, but the backing array is also bounded so a week-long session can't balloon the tab.
 - **Freeze Stream** freezes *rendering only*: incoming batches keep landing in the client store (and server buffer) while frozen, with a "n new entries" badge; unfreezing scrolls to live tail. Nothing is dropped by freezing.
 
+## Docker project association (phases 2 + 5)
+
+Discovered containers are marked `inCurrentProject` on their `SourceDescriptor` (the sidebar shows only these until "Show all containers" is toggled). The matcher (`src/ingest/docker.ts`) resolves the flag per container in strict priority order — the first *applicable* tier decides, and lower tiers are never consulted once a higher tier applies, even on a negative comparison ("paths over names", [D11](decisions.md)):
+
+1. **Path-label match (phase 5).** If the container carries `io.lando.root` (Lando), compare that path against TraceRiver's cwd; else if it carries `com.docker.compose.project.working_dir` (vanilla Compose), compare that. A label matches when it equals cwd or is an ancestor of cwd — segment-aware (no sibling-prefix false positives), realpath-normalized on both sides (macOS `$TMPDIR` symlinks), forward direction only (a labeled path *below* cwd does not match). Lando's `working_dir` points into `~/.lando/compose/` and is deliberately ignored whenever `io.lando.root` is present.
+2. **Compose-file `name:` match (phase 2).** `com.docker.compose.project` vs. the top-level `name:` of a compose file in cwd, case-insensitive.
+3. **Normalized-basename match (phase 2, final fallback).** `com.docker.compose.project` vs. cwd's basename lowercased with Compose-invalid characters stripped.
+
+Association uses only label data already fetched via the read-only `listContainers`/`inspect` calls — no extra daemon capabilities, no tool-specific SDKs, fully offline. `docker.include`/`docker.exclude` and the all-containers toggle apply identically regardless of which tier matched. Each supported signal is regression-tested against a captured-label fixture (`test/fixtures/docker-labels/`); new real-world association gaps are collected as scenarios in [phase 5](phases/phase-5-project-association.md), a living document.
+
 ## Error intelligence (phase 4)
 
 Every ERROR/FATAL entry gets a **fingerprint** at ingestion (`src/errors/`): `sha256(source + normalized message + normalized top stack frame)`, with conservative placeholder normalization (timestamps, ids, values, paths — false merges are worse than false splits). Recurrences collapse into server-side `ErrorGroup`s that live **beside the ring buffer** and survive entry eviction (counts/firstSeen persist; samples are flagged evicted). Capped at 500 groups, LRU by `lastSeen`. Each group keeps a rolling 30-minute per-minute histogram; a group is flagged `spiking` when its current rate exceeds 5× its trailing 30-min average and ≥ 10/min absolute (constants in `src/errors/config.ts`). Groups are pushed as `{type:"errorGroups"}` WS batches and served by `GET /api/errors`; the client never computes fingerprints.

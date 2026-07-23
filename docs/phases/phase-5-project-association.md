@@ -35,7 +35,7 @@ Candidates to watch for, unconfirmed: Podman quadlets/systemd units without comp
 
 ## Exit criteria (per implementation batch)
 
-- [ ] Each logged scenario has a captured-label fixture and a matcher test that fails pre-fix and passes post-fix.
-- [ ] The Lando project (S1) associates correctly when `traceriver start` runs from the project root, with no config required.
-- [ ] Vanilla Compose projects keep associating exactly as in phase 2 (no regressions in the existing `test/docker/` suite).
-- [ ] Association order (path label → compose-file name → normalized basename) is documented in `docs/architecture.md` and an ADR records the "paths over names" decision.
+- [x] Each logged scenario has a captured-label fixture and a matcher test that fails pre-fix and passes post-fix. *(Batch 1/S1, feature 005: `test/fixtures/docker-labels/`, `test/docker/path-project-matcher.test.ts`; pre-fix failure demonstrated via git stash — see `docs/qa/test-plans/005-phase-5-project-association.md`.)*
+- [x] The Lando project (S1) associates correctly when `traceriver start` runs from the project root, with no config required. *(Feature 005, verified against the captured S1 fixture and live-daemon tests.)*
+- [x] Vanilla Compose projects keep associating exactly as in phase 2 (no regressions in the existing `test/docker/` suite — `discovery.test.ts` passes unmodified).
+- [x] Association order (path label → compose-file name → normalized basename) is documented in `docs/architecture.md` and an ADR ([D11](../decisions.md)) records the "paths over names" decision. *(Forward-direction matching only; reverse/monorepo deferred by product-owner decision — candidate S3.)*

@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "scenario": "Vanilla docker compose (no Lando) — path-signal fixture",
+    "source": "Captured live by this QA run (feature 005) against a real, disposable `docker compose` project — not synthesized. Reproduction: `compose.yaml` with `name: trqa-vanilla-path`, one `alpine:3` service, `docker compose up -d` from a scratch tmpdir, then `docker inspect tr-qa-vanilla-path-app --format '{{json .Config.Labels}}'`. Container removed immediately after capture (`docker compose down`); no lasting container exists on the host.",
+    "capturedVerbatim": [
+      "com.docker.compose.project",
+      "com.docker.compose.project.config_files",
+      "com.docker.compose.project.working_dir",
+      "com.docker.compose.service",
+      "com.docker.compose.version",
+      "com.docker.compose.config-hash",
+      "com.docker.compose.container-number",
+      "com.docker.compose.depends_on",
+      "com.docker.compose.image",
+      "com.docker.compose.oneoff"
+    ],
+    "note": "com.docker.compose.project.working_dir was captured as the *unresolved* tmpdir path (macOS `$TMPDIR`, e.g. `/var/folders/.../T/tr-qa-vanilla-compose.XXXX`), confirming live that vanilla Compose does NOT itself realpath-resolve a symlinked working directory before stamping the label — this is exactly the case `safeRealpath()`/`resolvedCwd` in src/ingest/docker.ts exists to handle. The path value below is the literal captured tmpdir from this run's capture session; it is used here only as label shape/content, not compared against any specific cwd by these fixture tests (the matcher tests below use fresh scratch dirs per test case for exact/ancestor/sibling scenarios)."
+  },
+  "labels": {
+    "com.docker.compose.config-hash": "70e9dbbc47943cee290909fcae47a50c5c0a41d86e9af24bd82e9f01cc698c46",
+    "com.docker.compose.container-number": "1",
+    "com.docker.compose.depends_on": "",
+    "com.docker.compose.image": "sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b",
+    "com.docker.compose.oneoff": "False",
+    "com.docker.compose.project": "trqa-vanilla-path",
+    "com.docker.compose.project.config_files": "/var/folders/bc/4ky8p8w56kj7mz1160nbzpg80000gn/T/tr-qa-vanilla-compose.pjd2axAtK6/compose.yaml",
+    "com.docker.compose.project.working_dir": "/var/folders/bc/4ky8p8w56kj7mz1160nbzpg80000gn/T/tr-qa-vanilla-compose.pjd2axAtK6",
+    "com.docker.compose.service": "app",
+    "com.docker.compose.version": "5.3.0"
+  }
+}

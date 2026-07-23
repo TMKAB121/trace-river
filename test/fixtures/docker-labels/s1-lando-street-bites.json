@@ -1,0 +1,19 @@
+{
+  "_meta": {
+    "scenario": "S1 — Lando + Laravel (street_bites)",
+    "source": "docs/phases/phase-5-project-association.md § S1 root cause / Available exact signals",
+    "capturedVerbatim": [
+      "io.lando.root",
+      "com.docker.compose.project"
+    ],
+    "note": "io.lando.root and com.docker.compose.project are quoted verbatim from the phase doc's captured evidence. io.lando.src follows the phase doc's exact stated template ('<root>/.lando.yml', root substituted from io.lando.root above). io.lando.landofiles and the precise com.docker.compose.project.working_dir value are NOT given verbatim anywhere in the spec/phase doc (the phase doc only says the working_dir label 'points into ~/.lando/compose/<app>/' and lists io.lando.landofiles as present/corroborating, without quoting its value) — the values below for those two fields are representative reconstructions of that description, included so the fixture is a complete, realistic label set per spec 005's fixture requirement. The two fields the matcher actually decides on for this scenario (io.lando.root, and the deliberately-mismatching working_dir it must override) are exact quotes."
+  },
+  "labels": {
+    "io.lando.root": "/Users/anthonysayge/projects/street_bites",
+    "io.lando.src": "/Users/anthonysayge/projects/street_bites/.lando.yml",
+    "io.lando.landofiles": "/Users/anthonysayge/projects/street_bites/.lando.yml",
+    "com.docker.compose.project": "streetbites",
+    "com.docker.compose.project.working_dir": "/Users/anthonysayge/.lando/compose/streetbites",
+    "com.docker.compose.service": "appserver"
+  }
+}

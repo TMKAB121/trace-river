@@ -10,7 +10,7 @@
  * socket connection is attempted and no `dockerStatus` message is ever sent
  * (docs/specs/002-phase-2-docker.md § Config surface consumed).
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { Writable } from "node:stream";
 import type { Readable } from "node:stream";
@@ -69,6 +69,12 @@ export class DockerManager {
   private readonly enabled: boolean;
   private readonly includeGlobs: string[];
   private readonly excludeGlobs: string[];
+  private readonly cwd: string;
+  /** Realpath-resolved `cwd`, used only by the tier-1 path-label comparison
+   *  (see `matchesProjectPath`) — never passed to `resolveProjectName`,
+   *  whose tier-2/3 behavior must stay byte-for-byte unchanged (spec 005 §
+   *  Regression guarantee). */
+  private readonly resolvedCwd: string;
   private readonly projectName: string;
 
   private readonly client = new DockerClient();
@@ -91,6 +97,8 @@ export class DockerManager {
     this.enabled = opts.enabled;
     this.includeGlobs = opts.include;
     this.excludeGlobs = opts.exclude;
+    this.cwd = opts.cwd;
+    this.resolvedCwd = safeRealpath(opts.cwd);
     this.projectName = resolveProjectName(opts.cwd);
   }
 
@@ -220,8 +228,11 @@ export class DockerManager {
 
       const composeProject = info.Labels?.["com.docker.compose.project"] ?? null;
       const composeService = info.Labels?.["com.docker.compose.service"] ?? null;
+      const pathMatch = resolvePathMatch(info.Labels, this.resolvedCwd);
       const inCurrentProject =
-        composeProject !== null && composeProject.toLowerCase() === this.projectName.toLowerCase();
+        pathMatch !== null
+          ? pathMatch
+          : composeProject !== null && composeProject.toLowerCase() === this.projectName.toLowerCase();
       const dockerMeta: NonNullable<SourceDescriptor["docker"]> = {
         image: info.Image,
         composeProject,
@@ -611,6 +622,90 @@ function passesFilters(name: string, include: string[], exclude: string[]): bool
   if (include.length > 0 && !include.some((g) => globToRegExp(g).test(name))) return false;
   if (exclude.some((g) => globToRegExp(g).test(name))) return false;
   return true;
+}
+
+// Docker labels and TraceRiver's cwd are both POSIX-style absolute paths on
+// every platform this project currently targets (docs/specs/005-phase-5-
+// project-association.md's evidence is macOS; `resolveProjectName` below
+// already assumes "/" joins for the same reason) — no cross-platform
+// separator handling is attempted here.
+const PATH_SEP = "/";
+
+function stripTrailingSep(path: string): string {
+  return path.length > 1 && path.endsWith(PATH_SEP) ? path.slice(0, -1) : path;
+}
+
+/**
+ * Resolves symlinks in an absolute path, falling back to the path
+ * unmodified when it can't be resolved (doesn't exist on this host,
+ * permission denied, or — in a pure fixture-driven matcher test — is a
+ * synthetic path with no filesystem entry at all). Needed because macOS's
+ * default `$TMPDIR` (`/var/folders/...`) is itself a symlink to
+ * `/private/var/folders/...`, and tools that `chdir` before deriving a
+ * project path (verified live against `docker compose`, whose
+ * `com.docker.compose.project.working_dir` label reflects the
+ * syscall-canonicalized cwd) report the resolved form — without this, an
+ * otherwise-exact path-label match would spuriously fail any time
+ * TraceRiver's own cwd sits under a symlinked directory (e.g. every
+ * `test/docker/discovery.test.ts` run using `os.tmpdir()`).
+ */
+function safeRealpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Forward-direction ancestor-path match (docs/specs/005-phase-5-project-
+ * association.md § Ancestor-path semantics): true when, after resolving
+ * symlinks and stripping any trailing separator from both sides, `cwd`
+ * equals `labelPath` or is nested one or more whole segments below it. The
+ * `+ PATH_SEP` boundary (rather than a bare `startsWith`) is what keeps this
+ * segment-aware — a sibling directory sharing a string prefix (e.g. label
+ * `/x/street_bites-old` vs cwd `/x/street_bites`) must never match.
+ *
+ * Deliberately one-directional: a labeled path nested *below* cwd (the
+ * monorepo case) is out of scope for this batch per product-owner decision
+ * (spec 005 Open Questions #1) and must fall through to the name-based
+ * tiers, not match here.
+ *
+ * `resolvedCwd` is expected to already be realpath-resolved by the caller
+ * (`DockerManager.resolvedCwd`, resolved once at construction); `labelPath`
+ * is resolved here, per label, since it comes from container metadata that
+ * may or may not already be canonicalized by the tool that set it.
+ */
+function matchesProjectPath(labelPath: string, resolvedCwd: string): boolean {
+  const label = stripTrailingSep(safeRealpath(labelPath));
+  const dir = stripTrailingSep(resolvedCwd);
+  return dir === label || dir.startsWith(label + PATH_SEP);
+}
+
+/**
+ * Tier-1 path-label resolution (spec 005 § Interaction specs). Returns
+ * `null` when neither recognized path label is present, signaling the
+ * caller to fall through to the existing tier-2/3 name-based comparison
+ * (folded into `resolveProjectName`, unchanged). Otherwise returns the
+ * path-match boolean directly and — critically — that tier is never
+ * reconsulted: `io.lando.root`, if present, is used exclusively, even when
+ * its comparison is negative. Lando's own
+ * `com.docker.compose.project.working_dir` points into its internal
+ * `~/.lando/compose/<app>/` scratch location for Lando-managed containers,
+ * not the host project directory, and would produce a false negative if
+ * compared against cwd (docs/phases/phase-5-project-association.md § S1
+ * root cause) — so it is never consulted once `io.lando.root` is present,
+ * applicable or not. Absent `io.lando.root`, `working_dir` (vanilla
+ * Compose, no Lando involved) is consulted the same way.
+ */
+function resolvePathMatch(labels: Record<string, string> | undefined, cwd: string): boolean | null {
+  const landoRoot = labels?.["io.lando.root"];
+  if (landoRoot !== undefined) return matchesProjectPath(landoRoot, cwd);
+
+  const workingDir = labels?.["com.docker.compose.project.working_dir"];
+  if (workingDir !== undefined) return matchesProjectPath(workingDir, cwd);
+
+  return null;
 }
 
 const COMPOSE_FILE_CANDIDATES = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
