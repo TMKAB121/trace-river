@@ -14,8 +14,11 @@ detail lives in [`docs/project/features/`](features/).
 [`features/002-phase-2-docker.md`](features/002-phase-2-docker.md)),
 **Phase 3 — Auto-Discovery** (see
 [`features/003-phase-3-auto-discovery.md`](features/003-phase-3-auto-discovery.md)),
-and **Phase 4 — Error Intelligence** (see
-[`features/004-phase-4-error-intelligence.md`](features/004-phase-4-error-intelligence.md)).
+**Phase 4 — Error Intelligence** (see
+[`features/004-phase-4-error-intelligence.md`](features/004-phase-4-error-intelligence.md)),
+and, from the living **Phase 5 — Real-World Project Association** scenario log,
+**batch 1 / scenario S1** (see
+[`features/005-phase-5-project-association.md`](features/005-phase-5-project-association.md)).
 Everything described below reflects that shipped state; nothing here is
 aspirational.
 
@@ -77,10 +80,23 @@ TraceRiver runs as a single Node.js process, started by the CLI
   a best-effort heuristic — a resolved socket file existing, or `docker` on
   `PATH`, vs. neither; `permission_denied` is the one exact signal, keyed off
   `EACCES`). Discovery filters containers to the current directory's Docker
-  Compose project (`com.docker.compose.project` label, or a local
-  `compose.yaml`/`docker-compose.yml` `name:` field) plus `docker.include`/
-  `exclude` globs; `inCurrentProject` is sent for every discovered container
-  regardless, and "Show all containers" is a client-side render filter only.
+  Compose project plus `docker.include`/`exclude` globs; `inCurrentProject`
+  is sent for every discovered container regardless, and "Show all
+  containers" is a client-side render filter only. As of phase 5 batch 1,
+  `inCurrentProject` is resolved in strict priority order (`resolvePathMatch`
+  → `resolveProjectName`, both in `docker.ts`), the first applicable tier
+  deciding even on a negative comparison: a container's `io.lando.root` label
+  (Lando), else its `com.docker.compose.project.working_dir` label (vanilla
+  Compose), compared via `matchesProjectPath` against a realpath-resolved
+  cwd — segment-aware (a trailing-separator-stripped `dir === label ||
+  dir.startsWith(label + "/")` check, so `street_bites-old` never matches
+  `street_bites`) and forward-direction only (a labeled path *below* cwd,
+  e.g. a monorepo subdirectory, does not match — deferred pending a real
+  captured scenario, see § Known deviations). Only when neither label is
+  present does it fall through to phase 2's unchanged name heuristics
+  (`com.docker.compose.project` vs. a local `compose.yaml`/
+  `docker-compose.yml` `name:` field, else the normalized directory
+  basename).
   Subscription (`subscribe`/`unsubscribe` for a `docker:<name>` id) is
   **server-global** — one shared `container.logs()` attachment per
   subscribed container regardless of how many browser tabs are open, unlike
@@ -267,7 +283,13 @@ REST/WS-sequence tests plus real-pipeline error-grouping criteria tests),
 subscribe/unsubscribe, TTY/non-TTY demux, restart/rename lifecycle,
 `docker.enabled: false` fallback, daemon status endpoints, a high-throughput
 load test; the suite `describe.skipIf`s itself on a host without a reachable
-Docker daemon), `test/discovery/` (phase 3 — zero-config Laravel tailing,
+Docker daemon; and, as of phase 5 batch 1, `path-project-matcher.test.ts` —
+daemon-free, fixture-driven tests of `resolvePathMatch`/`matchesProjectPath`
+against captured-label JSON in `test/fixtures/docker-labels/`
+(`s1-lando-street-bites.json`, `vanilla-compose-working-dir.json`) — plus
+`path-project-association-live.test.ts`, a live-daemon test of
+include/exclude filtering and the "Show all containers" toggle for
+path-matched containers), `test/discovery/` (phase 3 — zero-config Laravel tailing,
 rotation/truncation handling and manual-unsubscribe permanence, `watch`
 config resolution/dedupe, no-file-target framework notes,
 `discovery.disable`/`discovery.enabled: false`, environment-tier sources
@@ -284,7 +306,8 @@ regression test added during the fix loop), and `test/e2e/` (a smoke test
 that starts the server programmatically and asserts the WS stream delivers
 parsed entries end-to-end, plus a memory/RSS test). Phase 1 shipped at
 60/60 tests passing; phase 2 shipped at 81/81; phase 3 shipped at 109/109;
-phase 4 shipped at 199/199 (39 test files total).
+phase 4 shipped at 199/199 (39 test files total); phase 5 batch 1 shipped at
+211/211 (41 test files total), 0 defects.
 
 ## Known deviations / accepted tradeoffs
 
@@ -372,6 +395,22 @@ phase 4 shipped at 199/199 (39 test files total).
   mode (a false split — two occurrences of the same error stay in separate
   groups) is the spec's own explicitly-accepted, lower-severity failure mode
   (a false *merge* is the one the algorithm is biased against).
+- **Reverse ancestor-path (monorepo) project association is deliberately
+  not implemented** (phase 5 batch 1, spec 005 § Open Questions #1): a
+  container's path label (`io.lando.root`/`com.docker.compose.project.
+  working_dir`) nested *below* TraceRiver's cwd — e.g. `traceriver start`
+  run at a monorepo root with the compose/Lando project one level down —
+  falls through to the unchanged phase-2 name heuristics rather than
+  matching via the path tier. This is a product-owner-deferred scope
+  boundary, not an oversight: the phase 5 living doc
+  ([`phase-5-project-association.md`](../phases/phase-5-project-association.md)
+  § S2+) lists the reverse direction only as an unconfirmed candidate, and
+  implementing it broadly (any container path nested anywhere under a wide
+  cwd, e.g. `~/projects`) is a real false-positive-risk tradeoff that needs
+  its own captured-evidence scenario (candidate S3) before it ships. A
+  "matched via path/name" diagnostic affordance in the container tooltip
+  was also considered and not built (spec 005 § Open Questions #2) — no UI
+  surfaces which tier decided `inCurrentProject`.
 
 ## Roadmap
 
