@@ -320,7 +320,11 @@ phase 4 shipped at 199/199 (39 test files total); phase 5 batch 1 shipped at
   a required CI gate: Node 20 on GitHub runners and Node 26 locally both peak
   near 307 MB, and the tighter ceiling flaked under machine-to-machine RSS
   variance. 350 MB still catches a real regression — the ring buffer is
-  bounded, so a leak balloons unboundedly past any ceiling.
+  bounded, so a leak balloons unboundedly past any ceiling. The same test's
+  upload-responsiveness ceiling was likewise relaxed from 15s to **45s**
+  (owner-approved 2026-07-22): GitHub's shared macOS runners spike to ~15s vs.
+  the dev-Mac ~3s, which is slow hardware, not a hang (a true hang blows the
+  test's own 180s timeout first).
 - `traceriver init` (writing a starter `traceriver.json`) is documented in
   [`docs/configuration.md`](../configuration.md) but not yet implemented —
   still out of scope as of phase 3.
