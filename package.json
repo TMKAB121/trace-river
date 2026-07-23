@@ -37,6 +37,7 @@
     "dev:server": "tsx watch src/server/dev-entry.ts",
     "dev:web": "cd web && vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
     "test": "vitest run",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },

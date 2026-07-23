@@ -10,7 +10,7 @@ Layout: `parsers/` (golden + fuzz), `server/` (auth, ring buffer, replay/clear, 
 - **Golden pattern** (`pipeline-golden.test.ts` + per-format tests): fixture in → exact expected entries out.
 - **Chunk-boundary fuzz** (`chunk-fuzz.test.ts`): re-feeds each fixture split at random byte offsets and asserts output is byte-identical to feeding it whole. This one test catches most partial-line/demux bugs — every new parser and every ingest adapter must pass it.
 - **Server tests** use `helpers/server.ts` `startTestServer()`: boots the real server on an OS-assigned ephemeral port with a per-test token, returns `{baseUrl, wsUrl, token, close}`. Always `close()` in teardown. `helpers/child-server-runner.ts` runs the server in a child process for the memory test.
-- **Memory test threshold** (`e2e/memory.test.ts`): the 100 MB-upload RSS ceiling reflects a product-owner-accepted range (263–292 MB measured vs. the spec's ~250 MB target — see `docs/project/overview.md` § Known deviations). Don't "fix" a failure by bumping the threshold; a regression beyond the accepted range is a real defect.
+- **Memory test threshold** (`e2e/memory.test.ts`): the 100 MB-upload RSS ceiling is **350 MB** (owner-approved 2026-07-22, relaxed from 300 so the test can gate CI without flaking on runner-to-runner RSS variance — Node 20 on GitHub runners and Node 26 locally both peak ~307 MB). It reflects a product-owner-accepted range (263–292 MB originally measured vs. the spec's ~250 MB target — see `docs/project/overview.md` § Known deviations). Don't "fix" a failure by nudging the threshold further; the ring buffer is bounded, so a genuine leak balloons unboundedly past 350 — a breach there is a real defect, not a headroom problem.
 
 ## QA process (agentic pipeline)
 
