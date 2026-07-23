@@ -1,7 +1,7 @@
 # TraceRiver
 
 <p align="center">
-  <img src="assets/traceriver_logo_concept.png" alt="TraceRiver — local log console" width="600" />
+  <img src="https://raw.githubusercontent.com/TMKAB121/trace-river/main/assets/traceriver_logo_concept.png" alt="TraceRiver — local log console" width="600" />
 </p>
 
 **TraceRiver** is a local-development log console, distributed as an npm package. One command consolidates every log stream in your dev environment — Docker containers, framework log files, one-off dumps — into a single stylized browser UI, groups the errors hiding in the noise into one card per problem, and helps you write the debugging prompt.
@@ -19,7 +19,7 @@ Local development today means logs scattered across `docker compose logs`, `stor
 ## Concept
 
 <p align="center">
-  <img src="assets/traceriver_ui_concept.png" alt="TraceRiver UI concept — unified log stream" width="800" />
+  <img src="https://raw.githubusercontent.com/TMKAB121/trace-river/main/assets/traceriver_ui_concept.png" alt="TraceRiver UI concept — unified log stream" width="800" />
 </p>
 
 - **Left sidebar** — every discovered log source with per-source toggles. When Docker is enabled (the default) and/or auto-discovery finds something, it splits into up to three sections: **Containers** (the current Docker Compose project's running containers, checkbox-subscribe to attach a live stream), **Files** (uploads, plus auto-discovered/`traceriver.json`-declared project log files), and **Environment** (macOS-only, cross-project tool logs — Herd/Valet/Homebrew nginx/PHP-FPM — offered unchecked by default). With Docker disabled and nothing discovered, it's phase 1's flat list.
@@ -169,6 +169,8 @@ For `kind: "docker"` sources, `subscribe`/`unsubscribe` is **server-global** (sh
 - **Fast under fire.** A misbehaving container can emit thousands of lines per second; the UI must stay responsive (virtualized rendering, batched transport, bounded memory).
 
 ## Status
+
+**Phases 1–5 have shipped** (phase 5 is a living, incrementally-extended phase, currently through batch 1). TraceRiver is under active development; the per-phase detail below records what each shipped, newest capability last.
 
 **Phase 1 (Core Console) has shipped**: `traceriver start`, token-authed local server, the terminal-chic React console, the Uniform Parser Pipeline (`monolog`/`clf`/`jsonl`/`raw`), and streaming file upload with ring-buffer replay are all in place and QA/design-verified (60/60 tests, 22/22 acceptance criteria, [design review: APPROVED](docs/design-reviews/001-phase-1-core-console.md)).
 

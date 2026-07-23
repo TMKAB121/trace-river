@@ -1,9 +1,9 @@
 /**
  * Config resolution: CLI flag > traceriver.json > built-in default.
- * See docs/configuration.md for the full field reference. Phase 1 only
- * *acts* on port / buffer / open (the only source kind is uploaded files),
- * but the shape is defined in full so later phases don't need to redefine
- * it out from under phase 1.
+ * See docs/configuration.md for the full field reference. `port`, `buffer`,
+ * `open`, `docker`, `discovery`, and `watch` are all fully resolved and acted
+ * on here; `parsers` (custom regex parsers) is still raw file-config
+ * passthrough — declared in the shape but not yet consumed by any ingest.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";

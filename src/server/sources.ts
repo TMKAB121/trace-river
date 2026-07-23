@@ -1,7 +1,9 @@
 /**
  * In-memory source registry — one SourceDescriptor per ingest source for
- * the life of the process. Phase 1 only ever created `kind: "file"` sources
- * (uploads); phase 2 adds `kind: "docker"` (docs/specs/002-phase-2-docker.md).
+ * the life of the process. Three source kinds are created here: `kind: "file"`
+ * (uploads), `kind: "docker"` (docs/specs/002-phase-2-docker.md), and
+ * `kind: "local"` (tailed/discovered files, docs/specs/003-phase-3-auto-
+ * discovery.md).
  */
 import type { SourceDescriptor, SourceKind, SourceState } from "../shared/types.js";
 
@@ -39,10 +41,10 @@ export class SourceRegistry {
     return descriptor;
   }
 
-  /** Removes a source entirely — only ever used to settle a phantom entry;
-   *  phase 2 never actually calls this (renamed/removed docker sources
-   *  settle to `stopped` and stay visible, per spec 002 Decision 4). Kept
-   *  for completeness/tests. */
+  /** Removes a source entirely. No production caller invokes this: renamed/
+   *  removed docker sources settle to `stopped` and stay visible (spec 002
+   *  Decision 4), and local sources persist for the process lifetime. Kept
+   *  for registry completeness and exercised only by tests. */
   delete(id: string): void {
     this.sources.delete(id);
   }

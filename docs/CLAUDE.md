@@ -10,13 +10,13 @@ Three kinds of documents live here. Knowing which is which prevents both stale e
 | `log-schema.md` | The `TraceRiverLog` contract and all four pipeline stages (mirrored by `src/shared/types.ts` and `src/parsers/`) |
 | `configuration.md` | CLI flags and the full `traceriver.json` schema (schema is ahead of implementation — see below) |
 | `design-system.md` | **Every** visual value in the UI. No spec or component may use a raw value not listed here; new values are added here first, with a reason. Mirrored by `web/src/styles/tokens.css`. |
-| `decisions.md` | One-paragraph dated ADRs (D1–D10 so far). When making an architectural choice, append one recording *why*, so it isn't relitigated. |
+| `decisions.md` | One-paragraph dated ADRs (through D11). When making an architectural choice, append one recording *why*, so it isn't relitigated. |
 
 If a code change contradicts one of these, either the change is wrong or the doc must be updated in the same effort — never leave them diverged silently.
 
 ## Plans — `phases/`
 
-`phase-0` … `phase-4` are the build plan with exit criteria. Phases 0–2 are done; **3–4 are forward-looking** — they describe intended behavior (tailing/auto-discovery, error intelligence), not current code. They contain deliberately captured implementation gotchas — read the relevant phase doc before starting its implementation.
+`phase-0` … `phase-5` are the build plan with exit criteria. **Phases 0–5 have all shipped** — these are now historical build docs, not a forward roadmap; `docs/project/` is the source of truth for current shipped behavior. Phase 5 (`phase-5-project-association.md`) is a *living* phase, extended incrementally (currently through batch 1). The phase docs still contain deliberately captured implementation gotchas — worth reading before touching the corresponding subsystem.
 
 ## Per-feature pipeline artifacts — historical record, numbered `NNN-slug`
 

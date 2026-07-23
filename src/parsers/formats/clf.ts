@@ -9,7 +9,18 @@ const ACCESS_RE =
 // [Wed Oct 11 14:32:52 2026] [error] [client 1.2.3.4] message
 const ERROR_RE = /^\[(?<timestamp>[^\]]+)\]\s+\[(?<level>\w+)\](?:\s+\[[^\]]*\])*\s+(?<message>.*)$/;
 
-const ENTRY_START_RE = new RegExp(`(?:${ACCESS_RE.source})|(?:${ERROR_RE.source})`);
+// `entryStart` only detects an entry boundary; it never reads capture groups
+// (field extraction uses ACCESS_RE/ERROR_RE directly in parse()). Strip the
+// named groups before combining so the alternation doesn't declare <timestamp>
+// twice: duplicate named capture groups only became legal in V8 12.4 / Node 22,
+// and TraceRiver supports Node >=20 (package.json engines), where the combined
+// pattern throws "Duplicate capture group name" at module load. Non-capturing
+// groups match identically, so detection behavior is unchanged.
+const stripGroupNames = (src: string): string =>
+  src.replace(/\(\?<[A-Za-z_$][\w$]*>/g, "(?:");
+const ENTRY_START_RE = new RegExp(
+  `(?:${stripGroupNames(ACCESS_RE.source)})|(?:${stripGroupNames(ERROR_RE.source)})`,
+);
 
 const ERROR_LEVEL_MAP: Record<string, string> = {
   emerg: "FATAL",

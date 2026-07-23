@@ -1,0 +1,80 @@
+name: CI
+
+# Runs on every PR into any branch, plus pushes to main (so the default
+# branch always has a green baseline). The jobs below are independent and
+# run in parallel — mark them all as required in branch protection so a PR
+# can only merge once every check is green.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer commit on the same PR/branch cancels the in-flight run for it,
+# so CI never queues up stale work.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Declared engines floor (package.json "engines.node": ">=20"). CI runs on
+  # the floor so anything relying on a newer runtime surfaces here.
+  NODE_VERSION: "20"
+
+jobs:
+  typecheck-backend:
+    name: Typecheck (backend)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  typecheck-web:
+    name: Typecheck (web)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck:web
+
+  test:
+    name: Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Runs on macos-latest to match TraceRiver's target platform: the
+      # environment-source detectors (Herd/Valet/Homebrew) are macOS-only, and
+      # the file tailer is tuned against fsevents like a real dev machine.
+      # Trade-off: macOS runners have no Docker daemon, so the Docker-backed
+      # suites (test/docker/*) self-skip via dockerAvailable() rather than run
+      # for real. If Docker coverage is needed in CI, add a separate
+      # ubuntu-latest job that runs just those suites.
+      - run: npm test
+
+  build:
+    name: Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build

@@ -15,15 +15,23 @@
  * runs (see docs/qa/defects/001-phase-1-core-console-2.md) and filed it as a
  * defect; the product owner reviewed the measurement and ruled the ~263–292
  * MB range ACCEPTED as within the "~250 MB" tolerance for phase 1 (defect
- * closed as accepted-by-owner). The threshold below reflects that ruling —
- * 300 MB, a sensible ceiling a little above the observed range, so this test
- * still catches a genuine regression rather than asserting the exact
+ * closed as accepted-by-owner). The threshold below reflects that ruling,
+ * later relaxed to 350 MB (owner-approved 2026-07-22) so it could serve as a
+ * required CI gate: Node 20 on GitHub runners and Node 26 locally both peak
+ * around 307 MB, and a ceiling pinned just above the phase-1 measurement was
+ * too tight to survive machine-to-machine RSS variance without flaking. The
+ * check still catches a genuine regression rather than asserting the exact
  * originally-quoted 250 MB (which would fail forever on the owner-accepted
- * baseline) or removing the check entirely.
+ * baseline) or removing the check entirely — the ring buffer is bounded, so a
+ * real leak balloons unboundedly past 350, not a few MB over.
  *
  * Responsiveness: the owner separately accepted the ~3s peak latency spike
  * observed on a trivial endpoint during the upload as fine for phase 1 (no
- * numeric criterion exists in the spec) — see the test plan's notes.
+ * numeric criterion exists in the spec) — see the test plan's notes. The
+ * assertion's ceiling was relaxed 15s → 45s (owner-approved 2026-07-22) so it
+ * survives as a required CI gate: GitHub's shared macOS runners spike to ~15s,
+ * which is slow hardware rather than a hang (a true hang blows the 180s test
+ * timeout well before 45s).
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn, type ChildProcessWithoutNullStreams, execFileSync } from "node:child_process";
@@ -38,9 +46,14 @@ const RUNNER_PATH = join(__dirname, "..", "helpers", "child-server-runner.ts");
 const TSX_BIN = join(__dirname, "..", "..", "node_modules", ".bin", "tsx");
 
 const TARGET_BYTES = 100 * 1024 * 1024; // 100 MB, per the spec's exit criterion.
-// Owner-accepted ceiling (see module docstring) — was 250 (the literal spec
-// wording) until the product owner accepted the measured 263-292 MB range.
-const RSS_ACCEPTED_LIMIT_MB = 300;
+// Owner-accepted ceiling (see module docstring). History: 250 (literal spec
+// wording) → 300 (owner accepted the QA-measured 263-292 MB range) → 350.
+// The 350 bump (owner-approved 2026-07-22) adds headroom for CI: Node 20 on
+// GitHub runners and Node 26 locally measure ~307 MB, and a fixed ceiling
+// this tight was flaky as a required merge gate. 350 still guards regressions
+// — the ring buffer is bounded, so a genuine leak balloons unboundedly past
+// any ceiling rather than nudging a few MB over.
+const RSS_ACCEPTED_LIMIT_MB = 350;
 
 let child: ChildProcessWithoutNullStreams | undefined;
 
@@ -244,7 +257,11 @@ describe("Memory & responsiveness — 100 MB upload (spec 001 criterion 7)", () 
       // reviewed QA's measured ~3s peak latency spike and accepted it for
       // phase 1 (see docs/qa/test-plans/001-phase-1-core-console.md) — this
       // assertion only catches a true hang/timeout, not a specific ms budget.
-      expect(maxLatencyMs).toBeLessThan(15_000);
+      // Ceiling raised 15s → 45s (owner-approved 2026-07-22) so it can gate CI:
+      // GitHub's shared 2-core macOS runners spike to ~15s here (5x the dev-Mac
+      // ~3s) under the 100 MB upload, which is slow hardware, not a hang — a
+      // genuine hang blows this test's own 180s timeout long before 45s.
+      expect(maxLatencyMs).toBeLessThan(45_000);
 
       // Owner-accepted RSS ceiling (see module docstring) — was the literal
       // spec wording (~250 MB) until the product owner reviewed QA's
