@@ -14,9 +14,11 @@ traceriver start [options]
   --buffer <n>     Ring buffer capacity in entries (default 50000)
   --all-containers Include Docker containers outside the current compose project
 
-traceriver init
+traceriver init                    (documented; not yet implemented)
 
-  Writes a commented starter traceriver.json to the current directory.
+  Will write a commented starter traceriver.json to the current directory.
+  Only `traceriver start` is registered in the CLI today — hand-author
+  traceriver.json until this ships.
 ```
 
 `traceriver start` treats **the current working directory as the project root**: it's what compose-project filtering (phase 2) and framework fingerprinting (phase 3) key off.

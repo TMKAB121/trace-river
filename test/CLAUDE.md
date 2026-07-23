@@ -2,7 +2,7 @@
 
 Run all: `npm test`. Single file: `npm test -- test/parsers/clf.test.ts`. (Agentic-pipeline hooks block `npx`; use npm scripts or `node_modules/.bin/vitest`.)
 
-Layout: `parsers/` (golden + fuzz), `server/` (auth, ring buffer, replay/clear, subscribe, upload guardrails, port-zero), `e2e/` (smoke + memory), `fixtures/` (real captured log samples), `helpers/`.
+Layout: `parsers/` (golden + fuzz), `server/` (auth, ring buffer, replay/clear, subscribe, upload guardrails, port-zero, phase-4 errors REST/WS + pipeline-criteria), `docker/` (phase 2: discovery/filtering, subscribe/demux/lifecycle/status/load — real-daemon tests no-op without one; phase 5 path-project matcher + live association), `discovery/` (phase 3: framework fingerprinting, tailing, `watch` config, environment sources, load tests), `errors/` (phase 4: fingerprint golden corpus, placeholder-normalization rules, `ErrorGroupStore`, prompt-assembly snapshots), `e2e/` (smoke + memory), `fixtures/` (real captured log samples, incl. `docker-labels/`), `helpers/`.
 
 ## Conventions that matter
 

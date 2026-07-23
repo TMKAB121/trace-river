@@ -7,11 +7,10 @@
  * stickiness":
  *  - "file" (phase 1's only real source kind): detect on the first ~50 raw
  *    lines, then commit permanently for the whole file — no re-detection.
- *  - "live" (phase 2/3 docker/tail sources — not wired to any ingest
- *    adapter yet, kept here so those phases don't need to rebuild this):
- *    detect over the first ~20 entries, lock once a parser scores ≥0.8 on
- *    3 of them, and reset the lock if 10 consecutive entries fail to score
- *    well against it.
+ *  - "live" (docker/tail sources — src/ingest/docker.ts and
+ *    src/ingest/tail.ts feed these via `feedLine()`): detect over the first
+ *    ~20 entries, lock once a parser scores ≥0.8 on 3 of them, and reset the
+ *    lock if 10 consecutive entries fail to score well against it.
  */
 import { EventEmitter } from "node:events";
 import { LineSplitter, stripAnsi } from "./line-splitter.js";
