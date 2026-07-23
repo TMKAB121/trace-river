@@ -26,7 +26,7 @@ env:
 jobs:
   typecheck-backend:
     name: Typecheck (backend)
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,7 +38,7 @@ jobs:
 
   typecheck-web:
     name: Typecheck (web)
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,7 +50,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,14 +58,18 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      # ubuntu-latest ships with a running Docker daemon, so the Docker-backed
-      # suites run for real; they self-skip via dockerAvailable() if it's ever
-      # absent (test/docker/helpers.ts).
+      # Runs on macos-latest to match TraceRiver's target platform: the
+      # environment-source detectors (Herd/Valet/Homebrew) are macOS-only, and
+      # the file tailer is tuned against fsevents like a real dev machine.
+      # Trade-off: macOS runners have no Docker daemon, so the Docker-backed
+      # suites (test/docker/*) self-skip via dockerAvailable() rather than run
+      # for real. If Docker coverage is needed in CI, add a separate
+      # ubuntu-latest job that runs just those suites.
       - run: npm test
 
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
