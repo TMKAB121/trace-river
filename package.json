@@ -1,6 +1,6 @@
 {
   "name": "traceriver",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local log console — consolidate Docker, framework, and file logs into one unified stream and surface the errors. Under active development.",
   "keywords": [
     "logs",
