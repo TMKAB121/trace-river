@@ -148,15 +148,18 @@ export class SourcePipeline extends EventEmitter {
         // Never withhold a live entry while detection is still open (defect
         // 002-phase-2-docker-1, spec 002 criterion 5: subscribing must show
         // entries "within one broadcast interval"). Emit immediately,
-        // provisionally tagged with whatever parser has already earned an
-        // early lock this call (usually none yet, so `rawParser`) — the
-        // sticky-per-source-parser guarantee (docs/log-schema.md) still
-        // holds for every entry from the point detection actually commits
-        // onward; only these first few, already-visible entries keep
+        // provisionally tagged with an already-earned early lock, else the
+        // best parser that strongly matches *this* line, else `rawParser` —
+        // so a line that unmistakably looks like a format (e.g. a Bitnami
+        // line before the source has locked, issue #8) already carries its
+        // real level instead of an UNKNOWN that a stderr floor then lifts to
+        // WARN. The sticky-per-source-parser guarantee (docs/log-schema.md)
+        // still holds for every entry from the point detection actually
+        // commits onward; only these first few, already-visible entries keep
         // whatever provisional tag they were shown with rather than being
         // retroactively re-tagged.
         this.liveEntriesScored += 1;
-        const provisional = this.checkEarlyLock() ?? rawParser;
+        const provisional = this.checkEarlyLock() ?? this.bestScoringParser(entry.lines[0] ?? "") ?? rawParser;
         this.emit("entries", [this.buildLog(entry, provisional)]);
       } else {
         this.bufferedDetectionEntries.push(entry);
@@ -191,6 +194,17 @@ export class SourcePipeline extends EventEmitter {
     for (const parser of this.chain) {
       const stats = this.sampleCounts.get(parser)!;
       if (stats.qualifying >= LIVE_LOCK_QUALIFYING_THRESHOLD) return parser;
+    }
+    return null;
+  }
+
+  /** Highest-priority parser (chain order) that scores at/above the lock
+   *  threshold for a single line — used only to give a pre-lock live entry a
+   *  better provisional tag than `raw`. Returns null when nothing matches
+   *  strongly (the ordinary unstructured-line case). */
+  private bestScoringParser(line: string): FormatParser | null {
+    for (const parser of this.chain) {
+      if (safeScore(parser, line) >= LOCK_SCORE_THRESHOLD) return parser;
     }
     return null;
   }
