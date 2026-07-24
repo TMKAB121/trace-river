@@ -16,11 +16,17 @@ function keywordLevel(line: string): string | null {
   return null;
 }
 
-// Box-drawing (U+2500–U+257F) and block-element (U+2580–U+259F) glyphs — the
-// alphabet startup banners/logos are drawn from (e.g. the `███` Redis/MariaDB
-// splash).
-const BOX_BLOCK_ONLY_RE = /^[─-▟]+$/;
-// A horizontal rule: 4+ repetitions of a single ASCII separator glyph.
+// Any ASCII letter or digit — its presence means the line carries readable
+// text and is therefore never decoration. Tested first as a cheap, allocation-
+// free reject so ordinary log lines (the overwhelming majority) exit before the
+// stripped-copy path below (keeps the `raw` parser's per-line hot path clean).
+const HAS_ALNUM_RE = /[A-Za-z0-9]/;
+// Box-drawing (U+2500–U+257F) and block-element (U+2580–U+259F) glyphs, with
+// interior whitespace allowed — the alphabet startup banners/logos are drawn
+// from (e.g. the `███` Redis/MariaDB splash).
+const BOX_BLOCK_LINE_RE = /^[\s─-▟]+$/;
+// A horizontal rule: 4+ repetitions of a single ASCII separator glyph (after
+// interior whitespace is collapsed out).
 const ASCII_RULE_RE = /^([=\-_~*#+])\1{3,}$/;
 
 /**
@@ -33,9 +39,16 @@ const ASCII_RULE_RE = /^([=\-_~*#+])\1{3,}$/;
  * like `# Based on https://…`) is never treated as decoration.
  */
 function isDecorationLine(line: string): boolean {
+  // Fast, non-allocating reject for the common case (real text present).
+  if (HAS_ALNUM_RE.test(line)) return false;
+  // Box/block art: match directly (whitespace permitted), no copy needed. The
+  // `\S` guard requires at least one non-space glyph so a blank/whitespace line
+  // isn't treated as decoration.
+  if (/\S/.test(line) && BOX_BLOCK_LINE_RE.test(line)) return true;
+  // Separator rule: only now (rare — the line is punctuation-only) collapse
+  // interior whitespace and require 4+ of a single rule glyph.
   const stripped = line.replace(/\s+/g, "");
-  if (stripped.length < 3) return false;
-  return BOX_BLOCK_ONLY_RE.test(stripped) || ASCII_RULE_RE.test(stripped);
+  return stripped.length >= 4 && ASCII_RULE_RE.test(stripped);
 }
 
 /**
