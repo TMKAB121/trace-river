@@ -107,6 +107,46 @@ describe("SourcePipeline golden — raw.log (fallback)", () => {
   });
 });
 
+/** Feeds a fixture line-by-line through a fresh *live* SourcePipeline — the
+ *  path docker/tail sources take — optionally under a stderr-style level floor. */
+async function runLivePipeline(
+  fixtureName: string,
+  opts: { levelFloor?: "WARN" } = {},
+): Promise<TraceRiverLogInput[]> {
+  const text = readFileSync(fixturePath(fixtureName), "utf8");
+  const pipeline = new SourcePipeline({ sourceId: `docker:${fixtureName}`, mode: "live", ...opts });
+  const collected: TraceRiverLogInput[] = [];
+  pipeline.on("entries", (entries) => collected.push(...entries));
+  for (const line of text.split("\n").filter((l) => l.length > 0)) pipeline.feedLine(line);
+  pipeline.end();
+  return collected;
+}
+
+describe("SourcePipeline golden — bitnami.log under a docker stderr WARN floor (issue #8)", () => {
+  it("honors each line's self-declared level instead of flooring INFO/DEBUG up to WARN", async () => {
+    const entries = await runLivePipeline("bitnami.log", { levelFloor: "WARN" });
+    expect(entries).toHaveLength(8);
+    // Every line's own level survives — the WARN floor fills only UNKNOWN, and
+    // the bitnami parser leaves nothing UNKNOWN. Includes the first two lines,
+    // emitted provisionally before the source locks (per-line best-match tag).
+    expect(entries.map((e) => e.level)).toEqual([
+      "INFO",
+      "DEBUG",
+      "INFO",
+      "DEBUG",
+      "DEBUG",
+      "WARN",
+      "ERROR",
+      "INFO",
+    ]);
+    // The module/time/level/`==>` prefix is stripped from the rendered message.
+    expect(entries[2].message).toBe("Remapping ownership to handle docker volume sharing.");
+    // The dateless wall-clock time is discarded; with no docker per-line
+    // timestamp supplied here, entries fall back to arrival time.
+    expect(entries.every((e) => e.timestamp === FIXED_NOW)).toBe(true);
+  });
+});
+
 describe("SourcePipeline golden — nasty.log (ANSI, mixed formats, stack trace)", () => {
   it("strips ANSI codes before parsing and never crashes on mixed-format content", async () => {
     const entries = await runPipeline("nasty.log");

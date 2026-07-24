@@ -48,4 +48,22 @@ describe("rawParser — golden fixture (test/fixtures/raw.log)", () => {
     const noKeyword = rawParser.parse(entry("a terroir wine review with no matching keyword"));
     expect(noKeyword.level).toBeNull();
   });
+
+  it("classifies pure-decoration lines as DEBUG so banners/rules sink below the default view (issue #8)", () => {
+    // Block-glyph startup banner (Redis/MariaDB splash art).
+    expect(rawParser.parse(entry("███████ ██  ██ ██   ████ ██████   ██████")).level).toBe("DEBUG");
+    // Horizontal separator rules of a single repeated character.
+    expect(rawParser.parse(entry("===============================================")).level).toBe("DEBUG");
+    expect(rawParser.parse(entry("-----------------------------------------------")).level).toBe("DEBUG");
+    expect(rawParser.parse(entry("###########")).level).toBe("DEBUG");
+  });
+
+  it("never treats readable text as decoration, even when it opens with a rule glyph", () => {
+    // A comment or config line that merely starts with `#`/`=` still has words.
+    expect(rawParser.parse(entry("# Based on https://www.nginx.com/resources/wiki/")).level).toBeNull();
+    expect(rawParser.parse(entry("=== Starting server ===")).level).toBeNull();
+    // Too short / mixed to be a rule.
+    expect(rawParser.parse(entry("---")).level).toBeNull();
+    expect(rawParser.parse(entry("=-=-=-=")).level).toBeNull();
+  });
 });

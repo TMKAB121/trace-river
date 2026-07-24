@@ -100,7 +100,8 @@ Initial chain, in order:
 | `monolog` | `[2026-07-19 15:31:15] production.ERROR: message {ctx} []` | Laravel/Symfony/Monolog. Channel + level captured; trailing JSON blobs parsed into `context`. |
 | `clf` | Nginx/Apache access + error formats | Access lines: method/path/status into `context`, level derived from status (5xx→ERROR, 4xx→WARN). Error-log format handled separately (`[error]`, `[warn]` markers). |
 | `jsonl` | Line parses as a JSON object | Maps common key aliases: `level`/`severity`/`lvl`, `msg`/`message`, `time`/`ts`/`timestamp`/`@timestamp`. Covers pino, winston, bunyan, zap, logrus. |
-| `raw` | Always (fallback) | Level inferred by keyword scan (`error`, `exception`, `fatal`, `warn` as whole words); timestamp = arrival time. Never fails. |
+| `bitnami` | `postgresql 15:31:15.42 INFO  ==> Starting…` | Bitnami container-library bootstrap lines (`<module> <HH:MM:SS.ff> <LEVEL> ==>`). Extracts the self-declared level so it isn't left UNKNOWN and floored to WARN on stderr. Bare wall-clock time is discarded in favor of Docker's per-line timestamp. |
+| `raw` | Always (fallback) | Level inferred by keyword scan (`error`, `exception`, `fatal`, `warn` as whole words); pure-decoration lines (banner ASCII art / separator rules) are classified DEBUG so they don't read as noise; timestamp = arrival time. Never fails. |
 
 **Detection with per-source stickiness.** Running every parser against every line is wasted work and causes flapping. Instead:
 

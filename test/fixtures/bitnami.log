@@ -1,0 +1,8 @@
+redis 04:03:40.05 INFO  ==> ** Starting Redis setup **
+userperms 04:03:40.12 DEBUG ==> Ensuring expected directories/files exist...
+userperms 04:03:40.35 INFO  ==> Remapping ownership to handle docker volume sharing.
+loadkeys 04:03:40.48 DEBUG ==> Checking whether /user/.ssh/known_hosts.old is a private key
+landonginx 04:03:40.70 DEBUG ==> # Based on https://www.nginx.com/resources/wiki/start/topics/examples/full/
+redis 04:03:40.88 WARN  ==> A password is not set for the default Redis user.
+redis 04:03:41.02 ERROR ==> Could not bind to requested port, retrying.
+redis 04:03:41.20 INFO  ==> ** Redis setup finished! **

@@ -21,6 +21,7 @@ const FIXTURES = [
   "pino.jsonl",
   "raw.log",
   "nasty.log",
+  "bitnami.log",
 ];
 
 const TRIALS_PER_FIXTURE = 15;

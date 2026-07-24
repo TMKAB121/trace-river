@@ -104,14 +104,16 @@ describe("Criterion 4 — truncation doesn't break the tail", () => {
       const afterLines = all.filter((e) => e.message.includes("after truncate"));
       // Exactly one copy, no duplication/garbling from the truncate+reset —
       // this is genuinely the *first* entry this source's pipeline has ever
-      // seen (the pre-truncation content was skipped by the EOF-start
-      // attach), so it's still within the live-detection window and
-      // provisionally tagged `raw` (docs/log-schema.md § detection
-      // stickiness — a fresh source always starts "detecting"; a single
-      // entry can't yet earn a lock, which requires 3 of the first ~20 to
-      // score ≥0.8). `message` for the raw parser is the whole line verbatim.
+      // seen (the pre-truncation content was skipped by the EOF-start attach),
+      // so it's still within the live-detection window and a single entry
+      // can't yet earn a lock (which requires 3 of the first ~20 to score
+      // ≥0.8). It is nonetheless emitted provisionally tagged with the parser
+      // that strongly matches *this* line — monolog here (issue #8) — rather
+      // than the `raw` fallback, so it already renders with its parsed message
+      // and level instead of the whole line verbatim.
       expect(afterLines).toHaveLength(1);
-      expect(afterLines[0].message).toBe("[2026-07-19 09:05:00] local.INFO: after truncate {} []");
+      expect(afterLines[0].message).toBe("after truncate");
+      expect(afterLines[0].level).toBe("INFO");
 
       const res = await fetch(`${ts!.baseUrl}/api/sources`, {
         headers: { Authorization: `Bearer ${ts!.token}` },

@@ -23,7 +23,7 @@ Dev mode: the Vite server proxies `/api` and `/ws` to the backend on 7580. The b
 
 ```
 ingest adapter → line splitter → multi-line aggregator → format parsers → normalizer
-   (chunks)         (lines)      (entries w/ stack traces)  (monolog|clf|jsonl|raw)
+   (chunks)         (lines)      (entries w/ stack traces)  (monolog|clf|jsonl|bitnami|raw)
                                         ↓
                             ring buffer (assigns monotonic id)
                                         ↓
